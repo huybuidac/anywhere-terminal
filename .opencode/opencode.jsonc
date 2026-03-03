@@ -1,0 +1,25 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["@franlol/opencode-md-table-formatter@latest"],
+  "mcp": {
+    "gkg": {
+      "type": "remote",
+      "url": "http://localhost:27495/mcp"
+    },
+    "deepwiki": {
+      "type": "remote",
+      "url": "https://mcp.deepwiki.com/mcp"
+    },
+    "gh_grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app"
+    },
+    "brave-search": {
+      "type": "local",
+      "command": ["npx", "-y", "@brave/brave-search-mcp-server"]
+    }
+  },
+  "permission": {
+    "question": "allow"
+  }
+}
