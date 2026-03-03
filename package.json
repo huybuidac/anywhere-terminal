@@ -9,15 +9,29 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onView:anywhereTerminal.sidebar"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "anywhere-terminal.helloWorld",
-        "title": "Hello World"
-      }
-    ]
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "anywhereTerminal",
+          "title": "AnyWhere Terminal",
+          "icon": "$(terminal)"
+        }
+      ]
+    },
+    "views": {
+      "anywhereTerminal": [
+        {
+          "id": "anywhereTerminal.sidebar",
+          "name": "Terminal",
+          "type": "webview"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",
@@ -43,11 +57,11 @@
     "@types/vscode": "^1.109.0",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/addon-web-links": "^0.12.0",
+    "@xterm/xterm": "^6.0.0",
     "esbuild": "^0.27.3",
     "npm-run-all": "^4.1.5",
     "typescript": "^5.9.3"
-  },
-  "dependencies": {
-    "alchemy": "^0.87.0"
   }
 }

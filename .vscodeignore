@@ -1,0 +1,33 @@
+# Exclude everything by default
+**
+
+# Include only what's needed in the VSIX
+!dist/**
+!media/**
+!package.json
+!README.md
+!CHANGELOG.md
+!LICENSE
+
+# Re-exclude build tool files that might match
+src/**
+node_modules/**
+docs/**
+cyberk-flow/**
+*.ts
+!*.d.ts
+tsconfig*.json
+esbuild.js
+biome.json
+.git/**
+.vscode/**
+.vscode-test/**
+.github/**
+.gitignore
+.agents/**
+.opencode/**
+.drafts/**
+bun.lock
+pnpm-lock.yaml
+vsc-extension-quickstart.md
+AGENTS.md

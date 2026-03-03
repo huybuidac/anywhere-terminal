@@ -6,6 +6,11 @@ node_modules
 .agents/skills/cyberk-flow
 .opencode/plugins/cyber-flow.ts
 
+# Build artifacts in media/
+media/webview.js
+media/webview.js.map
+media/xterm.css
+
 # cyberk-flow
 .drafts
 cyberk-flow/memory.db*
