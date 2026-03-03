@@ -5,3 +5,7 @@ node_modules
 *.
 .agents/skills/cyberk-flow
 .opencode/plugins/cyber-flow.ts
+
+# cyberk-flow
+.drafts
+cyberk-flow/memory.db*
