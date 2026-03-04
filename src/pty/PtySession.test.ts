@@ -122,6 +122,51 @@ describe("PtySession.write", () => {
   });
 });
 
+// ─── pause / resume (flow control) ─────────────────────────────────
+
+describe("PtySession.pause / resume", () => {
+  it("delegates pause() to pty.pause() when alive", () => {
+    const session = new PtySession("fc-1");
+    const { mockModule, getControls } = createMockNodePty();
+    session.spawn(mockModule, "/bin/zsh", [], {});
+
+    session.pause();
+
+    expect(getControls().pty.pauseCalls).toBe(1);
+  });
+
+  it("delegates resume() to pty.resume() when alive", () => {
+    const session = new PtySession("fc-2");
+    const { mockModule, getControls } = createMockNodePty();
+    session.spawn(mockModule, "/bin/zsh", [], {});
+
+    session.resume();
+
+    expect(getControls().pty.resumeCalls).toBe(1);
+  });
+
+  it("pause() is no-op when not alive", () => {
+    const session = new PtySession("fc-3");
+    session.pause(); // No crash, no-op
+  });
+
+  it("resume() is no-op when not alive", () => {
+    const session = new PtySession("fc-4");
+    session.resume(); // No crash, no-op
+  });
+
+  it("pause() is no-op after process exits", () => {
+    const session = new PtySession("fc-5");
+    const { mockModule, getControls } = createMockNodePty();
+    session.spawn(mockModule, "/bin/zsh", [], {});
+    getControls().emitExit(0);
+
+    session.pause(); // No crash, no-op
+    // Can't check pauseCalls because pty is cleared after exit
+    expect(session.isAlive).toBe(false);
+  });
+});
+
 // ─── resize ─────────────────────────────────────────────────────────
 
 describe("PtySession.resize", () => {

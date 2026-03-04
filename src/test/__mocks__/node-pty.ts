@@ -17,6 +17,10 @@ export interface MockPtyControls {
     resizeCalls: Array<[number, number]>;
     /** All calls to kill() with optional signal */
     killCalls: Array<string | undefined>;
+    /** Number of calls to pause() */
+    pauseCalls: number;
+    /** Number of calls to resume() */
+    resumeCalls: number;
   };
 }
 
@@ -57,6 +61,8 @@ export function createMockNodePty(): {
         writeCalls: [],
         resizeCalls: [],
         killCalls: [],
+        pauseCalls: 0,
+        resumeCalls: 0,
 
         write(data: string) {
           mockPty.writeCalls.push(data);
@@ -67,8 +73,12 @@ export function createMockNodePty(): {
         kill(signal?: string) {
           mockPty.killCalls.push(signal);
         },
-        pause() {},
-        resume() {},
+        pause() {
+          mockPty.pauseCalls++;
+        },
+        resume() {
+          mockPty.resumeCalls++;
+        },
 
         onData(listener: (data: string) => void) {
           dataListener = listener;

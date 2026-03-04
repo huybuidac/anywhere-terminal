@@ -161,6 +161,34 @@ export class PtySession {
   }
 
   /**
+   * Pause the PTY process (flow control).
+   * Stops data events from firing until resume() is called.
+   * No-op if the process is not alive or pause() is not supported.
+   */
+  pause(): void {
+    if (!this._isAlive || !this._ptyProcess) {
+      return;
+    }
+    if (typeof this._ptyProcess.pause === "function") {
+      this._ptyProcess.pause();
+    }
+  }
+
+  /**
+   * Resume the PTY process (flow control).
+   * Re-enables data events after a pause().
+   * No-op if the process is not alive or resume() is not supported.
+   */
+  resume(): void {
+    if (!this._isAlive || !this._ptyProcess) {
+      return;
+    }
+    if (typeof this._ptyProcess.resume === "function") {
+      this._ptyProcess.resume();
+    }
+  }
+
+  /**
    * Resize the PTY process.
    * Cols and rows are clamped to a minimum of 1.
    * No-op if the process is not alive.

@@ -101,15 +101,21 @@ describe("detectShell", () => {
       expect(result.shell).toBe("/bin/zsh");
       expect(result.args).toEqual(["--login"]);
     } finally {
-      if (origShell !== undefined) process.env.SHELL = origShell;
-      else delete process.env.SHELL;
+      if (origShell !== undefined) {
+        process.env.SHELL = origShell;
+      } else {
+        delete process.env.SHELL;
+      }
     }
   });
 
   /** Helper to safely restore process.env.SHELL after test */
   function restoreShell(origShell: string | undefined) {
-    if (origShell !== undefined) process.env.SHELL = origShell;
-    else delete process.env.SHELL;
+    if (origShell !== undefined) {
+      process.env.SHELL = origShell;
+    } else {
+      delete process.env.SHELL;
+    }
   }
 
   it("falls back to /bin/bash when $SHELL is unset and /bin/zsh is missing", () => {
