@@ -46,7 +46,8 @@
     "check-types": "tsc --noEmit",
     "lint": "biome check --write --unsafe src/",
     "format": "biome format --write src/",
-    "test": "vscode-test"
+    "test": "vscode-test",
+    "cf": "bun run .agents/skills/cyberk-flow/scripts/cf.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.5",
