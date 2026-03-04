@@ -89,10 +89,13 @@ const webviewConfig = {
   platform: "browser",
   target: "es2020",
   // No externals — everything is bundled:
-  //   @xterm/xterm, @xterm/addon-fit, @xterm/addon-web-links
+  //   @xterm/xterm, @xterm/addon-fit, @xterm/addon-web-links, @xterm/addon-webgl
   sourcemap: !production,
   sourcesContent: false,
-  minify: production,
+  // Use granular minification: identifier renaming breaks xterm.js v6 (requestMode bug)
+  minifySyntax: production,
+  minifyWhitespace: production,
+  minifyIdentifiers: false,
   logLevel: "silent",
   plugins: [esbuildProblemMatcherPlugin, copyXtermCssPlugin],
 };

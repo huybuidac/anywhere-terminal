@@ -1,8 +1,27 @@
 {
   "name": "anywhere-terminal",
-  "displayName": "anywhere-terminal",
+  "displayName": "AnyWhere Terminal",
   "description": "Break free from the bottom panel! Put your terminal anywhere: Primary Sidebar, Secondary Sidebar, or multiple panels at once.",
   "version": "0.0.1",
+  "publisher": "huybuidac",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/huybuidac/anywhere-terminal"
+  },
+  "bugs": {
+    "url": "https://github.com/huybuidac/anywhere-terminal/issues"
+  },
+  "homepage": "https://github.com/huybuidac/anywhere-terminal#readme",
+  "keywords": [
+    "terminal",
+    "sidebar",
+    "panel",
+    "anywhere",
+    "xterm",
+    "secondary sidebar"
+  ],
   "engines": {
     "vscode": "^1.107.0"
   },
@@ -19,7 +38,7 @@
         {
           "id": "anywhereTerminal",
           "title": "AnyWhere Terminal",
-          "icon": "$(terminal)"
+          "icon": "media/icon.svg"
         }
       ]
     },
@@ -27,7 +46,7 @@
       "anywhereTerminal": [
         {
           "id": "anywhereTerminal.sidebar",
-          "name": "Terminal",
+          "name": "AnyWhere Terminal",
           "type": "webview"
         }
       ]
@@ -58,7 +77,7 @@
     "@opencode-ai/plugin": "latest",
     "@types/mocha": "^10.0.10",
     "@types/node": "22.x",
-    "@types/vscode": "^1.109.0",
+    "@types/vscode": "^1.107.0",
     "@vitest/coverage-v8": "^4.0.18",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
