@@ -16,6 +16,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import type { ExtensionToWebViewMessage, InitMessage, TerminalConfig } from "../types/messages";
+import { type ClipboardProvider, createKeyEventHandler } from "./InputHandler";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -172,74 +173,33 @@ function startThemeWatcher(): void {
 
 // ─── Input Handler ──────────────────────────────────────────────────
 
-/**
- * Handle paste — xterm.js terminal.paste() handles bracketed paste mode
- * and line ending normalization natively.
- * See: docs/design/keyboard-input.md#§4
- */
-async function handlePaste(terminal: Terminal): Promise<void> {
-  try {
-    const text = await navigator.clipboard.readText();
-    if (text) {
-      terminal.paste(text);
-    }
-  } catch (err) {
-    console.warn("[AnyWhere Terminal] Clipboard read failed:", err);
+/** Build a ClipboardProvider from the browser's navigator.clipboard API. */
+function getClipboardProvider(): ClipboardProvider | undefined {
+  if (!navigator.clipboard) {
+    return undefined;
   }
+  return {
+    readText: () => navigator.clipboard.readText(),
+    writeText: (text: string) => navigator.clipboard.writeText(text),
+  };
 }
 
 /**
- * Attach the custom key event handler and IME tracking to a terminal.
+ * Attach the custom key event handler and input wiring to a terminal.
+ * Uses the extracted InputHandler module for testability.
  * See: docs/design/keyboard-input.md#§2
  */
 function attachInputHandler(terminal: Terminal, tabId: string): void {
-  terminal.attachCustomKeyEventHandler((event: KeyboardEvent): boolean => {
-    // Only process keydown events
-    if (event.type !== "keydown") {
-      return true;
-    }
-
-    // Don't intercept during IME composition
-    if (isComposing) {
-      return true;
-    }
-
-    // Check for platform modifier (Cmd on macOS)
-    const isMac = navigator.platform.includes("Mac");
-    const modifier = isMac ? event.metaKey : event.ctrlKey;
-
-    if (!modifier) {
-      return true;
-    }
-
-    switch (event.key.toLowerCase()) {
-      case "c":
-        if (terminal.hasSelection()) {
-          void navigator.clipboard.writeText(terminal.getSelection()).catch(() => {
-            /* clipboard write may fail if webview lost focus */
-          });
-          terminal.clearSelection();
-          return false;
-        }
-        // No selection: let xterm handle -> sends \x03 (SIGINT)
-        return true;
-
-      case "v":
-        handlePaste(terminal);
-        return false;
-
-      case "k":
-        terminal.clear();
-        return false;
-
-      case "a":
-        terminal.selectAll();
-        return false;
-
-      default:
-        return true;
-    }
+  const handler = createKeyEventHandler({
+    terminal,
+    clipboard: getClipboardProvider(),
+    postMessage: (msg: unknown) => vscode.postMessage(msg),
+    getActiveTabId: () => activeTabId,
+    getIsComposing: () => isComposing,
+    isMac: navigator.platform.includes("Mac"),
   });
+
+  terminal.attachCustomKeyEventHandler(handler);
 
   // Wire terminal.onData -> send input to extension
   terminal.onData((data: string) => {
