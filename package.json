@@ -2,7 +2,7 @@
   "name": "anywhere-terminal",
   "displayName": "AnyWhere Terminal",
   "description": "Break free from the bottom panel! Put your terminal anywhere: Primary Sidebar, Secondary Sidebar, or multiple panels at once.",
-  "version": "0.0.1",
+  "version": "0.1.1",
   "publisher": "huybuidac",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -69,6 +69,11 @@
     "test:unit": "vitest run",
     "test:unit:watch": "vitest watch",
     "test:unit:coverage": "vitest run --coverage",
+    "deploy": "vsce package --no-dependencies && vsce publish --no-dependencies && ovsx publish anywhere-terminal-*.vsix",
+    "deploy:vsce": "vsce publish --no-dependencies",
+    "deploy:ovsx": "vsce package --no-dependencies && ovsx publish anywhere-terminal-*.vsix",
+    "deploy:patch": "vsce publish patch --no-dependencies && ovsx publish anywhere-terminal-*.vsix",
+    "deploy:minor": "vsce publish minor --no-dependencies && ovsx publish anywhere-terminal-*.vsix",
     "cf": "bun run .agents/skills/cyberk-flow/scripts/cf.ts"
   },
   "devDependencies": {

@@ -27,7 +27,6 @@ export const workspace: {
 
 // ─── extensions ─────────────────────────────────────────────────────
 
-// biome-ignore lint/style/useNamingConvention: matches VS Code Extension API shape (packageJSON)
 let _mockExtension: { packageJSON?: { version?: string } } | undefined;
 
 export const extensions = {
@@ -49,7 +48,6 @@ export function __setWorkspaceFolders(folders: Array<{ uri: { fsPath: string } }
 }
 
 /** Set mock extension for testing. */
-// biome-ignore lint/style/useNamingConvention: matches VS Code Extension API shape (packageJSON)
 export function __setExtension(ext: { packageJSON?: { version?: string } } | undefined): void {
   _mockExtension = ext;
 }

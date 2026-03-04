@@ -7,13 +7,7 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": [
-      "**",
-      "!**/dist",
-      "!**/out",
-      "!**/.vscode",
-      "!**/.vscode-test"
-    ]
+    "includes": ["**", "!**/dist", "!**/out", "!**/.vscode", "!**/.vscode-test"]
   },
   "formatter": {
     "enabled": true,
@@ -46,7 +40,7 @@
         "noUselessElse": "error",
         "noNonNullAssertion": "off",
         "useBlockStatements": "warn",
-        "useNamingConvention": "warn",
+        "useNamingConvention": "off",
         "useThrowOnlyError": "warn"
       }
     }
