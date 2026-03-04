@@ -10,7 +10,7 @@ A VS Code extension that allows users to place terminal instances anywhere in th
 - **Framework**: VS Code Extension API, xterm.js, node-pty
 - **Database**: N/A
 - **Build**: esbuild (bundler), pnpm (package manager)
-- **Test**: Mocha + @vscode/test-cli + @vscode/test-electron
+- **Test**: Mocha + @vscode/test-cli + @vscode/test-electron, Vitest (unit tests)
 
 ## Architecture
 
@@ -23,5 +23,5 @@ A VS Code extension that allows users to place terminal instances anywhere in th
 - **Type check**: `pnpm run check-types`
 - **Lint**: `pnpm run lint` (Biome — lint + format + auto-fix)
 - **Format**: `pnpm run format` (Biome — auto-format)
-- **Test**: `pnpm run test`
+- **Test**: `pnpm run test:unit` (Vitest)
 - **E2E**: N/A

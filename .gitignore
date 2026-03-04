@@ -11,6 +11,9 @@ media/webview.js
 media/webview.js.map
 media/xterm.css
 
+# Test coverage
+coverage/
+
 # cyberk-flow
 .drafts
 cyberk-flow/memory.db*
