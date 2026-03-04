@@ -14,6 +14,7 @@ declare function acquireVsCodeApi(): {
 
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import type { ExtensionToWebViewMessage, InitMessage, TerminalConfig } from "../types/messages";
 import { type ClipboardProvider, createKeyEventHandler } from "./InputHandler";
@@ -337,6 +338,18 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
 
   // Open terminal in container
   terminal.open(container);
+
+  // Try to enable WebGL renderer for better rendering on Retina displays
+  // (eliminates horizontal line gaps between rows in canvas renderer)
+  try {
+    const webglAddon = new WebglAddon();
+    webglAddon.onContextLoss(() => {
+      webglAddon.dispose();
+    });
+    terminal.loadAddon(webglAddon);
+  } catch {
+    console.warn("[AnyWhere Terminal] WebGL renderer not available, using canvas fallback");
+  }
 
   // Fit after opening (deferred to allow layout to settle)
   setTimeout(() => {
