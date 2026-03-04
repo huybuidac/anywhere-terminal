@@ -251,11 +251,12 @@ describe("createKeyEventHandler", () => {
       expect(result).toBe(false);
     });
 
-    it("returns true (native fallback) when clipboard is undefined", () => {
+    it("returns false (native paste via browser) when clipboard is undefined", () => {
       const deps = createDeps({ clipboard: undefined });
       const handler = createKeyEventHandler(deps);
       const result = handler(makeKeyEvent({ key: "v", metaKey: true }));
-      expect(result).toBe(true);
+      // Always returns false — xterm.js handles paste natively via browser paste event
+      expect(result).toBe(false);
     });
   });
 

@@ -92,8 +92,13 @@ const webviewConfig = {
   //   @xterm/xterm, @xterm/addon-fit, @xterm/addon-web-links, @xterm/addon-webgl
   sourcemap: !production,
   sourcesContent: false,
-  // Use granular minification: identifier renaming breaks xterm.js v6 (requestMode bug)
-  minifySyntax: production,
+  // xterm.js v6 breaks under esbuild minifySyntax and minifyIdentifiers
+  // (ReferenceError in requestMode / DECRQM parser). This is consistent with
+  // how other projects handle it:
+  //   - VS Code: xterm.js loaded as external AMD module, never minified by esbuild
+  //   - vscode-sidebar-terminal: webpack { minimize: false }
+  // We only apply whitespace minification which is safe (removes spaces/newlines).
+  minifySyntax: false,
   minifyWhitespace: production,
   minifyIdentifiers: false,
   logLevel: "silent",

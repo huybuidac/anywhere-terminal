@@ -62,8 +62,8 @@ const terminals = new Map<string, TerminalInstance>();
 /** Currently active (visible) terminal tab ID. */
 let activeTabId: string | null = null;
 
-/** Terminal location — set from init message config. TODO: wire from init in Phase 2. */
-const terminalLocation: TerminalLocation = "panel";
+/** Terminal location (sidebar/panel/editor), inferred from body data attribute. */
+let terminalLocation: TerminalLocation = "sidebar";
 
 /** Current terminal config — set from init, updated by configUpdate. */
 let currentConfig: TerminalConfig = {
@@ -90,20 +90,45 @@ let resizeObserver: ResizeObserver | undefined;
 /** MutationObserver for theme change detection. */
 let themeObserver: MutationObserver | undefined;
 
+/** Choose location by container aspect ratio when views are moved. */
+function inferLocationFromSize(width: number, height: number): TerminalLocation {
+  return width > height * 1.2 ? "panel" : "sidebar";
+}
+
+/** Apply background color for the inferred location to the webview body. */
+function applyBodyBackground(location: TerminalLocation): void {
+  const style = getComputedStyle(document.documentElement);
+  const varName = LOCATION_BACKGROUND_MAP[location];
+  const color = style.getPropertyValue(varName).trim();
+  if (color) {
+    document.body.style.backgroundColor = color;
+  }
+}
+
+/** Update location and re-apply terminal theme/background when it changes. */
+function updateLocation(location: TerminalLocation): void {
+  if (terminalLocation === location) {
+    return;
+  }
+  terminalLocation = location;
+  applyBodyBackground(location);
+  applyThemeToAll();
+}
+
 // ─── Theme Manager ──────────────────────────────────────────────────
 
 /**
  * Build an xterm.js ITheme object from VS Code's CSS variables.
  * See: docs/design/theme-integration.md#§6
  */
-function getXtermTheme(location: TerminalLocation = "panel"): Record<string, string | undefined> {
+function getXtermTheme(location: TerminalLocation = "sidebar"): Record<string, string | undefined> {
   const style = getComputedStyle(document.documentElement);
   const get = (varName: string): string | undefined => {
     const value = style.getPropertyValue(varName).trim();
     return value || undefined;
   };
 
-  const background = get("--vscode-terminal-background") ?? get(LOCATION_BACKGROUND_MAP[location]) ?? "#1e1e1e";
+  const background = get(LOCATION_BACKGROUND_MAP[location]) ?? get("--vscode-terminal-background") ?? "#1e1e1e";
 
   const foreground = get("--vscode-terminal-foreground") ?? get("--vscode-editor-foreground") ?? "#cccccc";
 
@@ -135,6 +160,14 @@ function getXtermTheme(location: TerminalLocation = "panel"): Record<string, str
     brightMagenta: get("--vscode-terminal-ansiBrightMagenta"),
     brightCyan: get("--vscode-terminal-ansiBrightCyan"),
     brightWhite: get("--vscode-terminal-ansiBrightWhite"),
+
+    // Keep the overview ruler lane visually invisible.
+    overviewRulerBorder: "transparent",
+
+    // Hide xterm's scrollbar slider visuals (we only keep a 1px lane for FitAddon math).
+    scrollbarSliderBackground: "transparent",
+    scrollbarSliderHoverBackground: "transparent",
+    scrollbarSliderActiveBackground: "transparent",
   };
 }
 
@@ -160,6 +193,7 @@ function startThemeWatcher(): void {
   themeObserver = new MutationObserver((mutations) => {
     for (const mutation of mutations) {
       if (mutation.type === "attributes" && mutation.attributeName === "class") {
+        applyBodyBackground(terminalLocation);
         applyThemeToAll();
         break;
       }
@@ -262,6 +296,8 @@ function setupResizeObserver(container: HTMLElement): void {
         return;
       }
 
+      updateLocation(inferLocationFromSize(width, height));
+
       debouncedFit();
     }
   });
@@ -314,6 +350,10 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
   containerEl.appendChild(container);
 
   // Create xterm.js Terminal with config
+  // overviewRuler.width=1 makes FitAddon deduct only 1px instead of the default 14px
+  // for the scrollbar. FitAddon calculates: scrollbarWidth = scrollback === 0 ? 0 : (overviewRuler?.width || 14).
+  // Setting width=0 doesn't work because 0 is falsy (0||14=14). Width=1 is truthy and
+  // makes the Viewport's scrollbar element only 1px wide — effectively invisible.
   const terminal = new Terminal({
     scrollback: config.scrollback || 10000,
     cursorBlink: config.cursorBlink ?? true,
@@ -328,9 +368,10 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
     fastScrollSensitivity: 5,
     tabStopWidth: 8,
     theme: getXtermTheme(terminalLocation),
+    overviewRuler: { width: 1 },
   });
 
-  // Load Tier 1 addons
+  // Load addons
   const fitAddon = new FitAddon();
   const webLinksAddon = new WebLinksAddon();
   terminal.loadAddon(fitAddon);
@@ -350,18 +391,6 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
   } catch {
     console.warn("[AnyWhere Terminal] WebGL renderer not available, using canvas fallback");
   }
-
-  // Fit after opening (deferred to allow layout to settle)
-  setTimeout(() => {
-    // Guard: terminal may have been disposed during async delay
-    if (!terminals.has(id)) {
-      return;
-    }
-    fitAddon.fit();
-    if (isActive) {
-      terminal.focus();
-    }
-  }, 0);
 
   // Wire resize event -> send resize message to extension
   terminal.onResize(({ cols, rows }) => {
@@ -386,6 +415,18 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
   if (isActive) {
     activeTabId = id;
   }
+
+  // Fit after opening (deferred to allow layout to settle)
+  setTimeout(() => {
+    // Guard: terminal may have been disposed during async delay
+    if (!terminals.has(id)) {
+      return;
+    }
+    fitAddon.fit();
+    if (isActive) {
+      terminal.focus();
+    }
+  }, 0);
 
   return instance;
 }
@@ -591,6 +632,12 @@ function handleInit(msg: InitMessage): void {
  * See: docs/design/message-protocol.md#§7
  */
 function bootstrap(): void {
+  const locationAttr = document.body.getAttribute("data-terminal-location");
+  if (locationAttr === "sidebar" || locationAttr === "panel" || locationAttr === "editor") {
+    terminalLocation = locationAttr;
+  }
+  applyBodyBackground(terminalLocation);
+
   // Set up IME composition tracking
   document.addEventListener("compositionstart", () => {
     isComposing = true;

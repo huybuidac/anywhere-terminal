@@ -17,3 +17,4 @@ coverage/
 # cyberk-flow
 .drafts
 cyberk-flow/memory.db*
+*.vsix

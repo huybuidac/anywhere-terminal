@@ -230,7 +230,6 @@ describe("buildEnvironment", () => {
   });
 
   it("returns TERM_PROGRAM_VERSION from extension metadata", () => {
-    // biome-ignore lint/style/useNamingConvention: matches VS Code Extension API shape
     __setExtension({ packageJSON: { version: "1.2.3" } });
     const env = buildEnvironment();
     expect(env.TERM_PROGRAM_VERSION).toBe("1.2.3");

@@ -318,10 +318,26 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     #terminal-container {
       flex: 1;
       overflow: hidden;
+      padding-left: 8px;
+      box-sizing: border-box;
+    }
+
+    /* Keep xterm's 1px overview-ruler/scrollbar lane invisible.
+       We still keep overviewRuler.width=1 in JS for FitAddon sizing math. */
+    .xterm .xterm-decoration-overview-ruler {
+      opacity: 0 !important;
+      pointer-events: none !important;
+    }
+
+    .xterm .xterm-scrollable-element > .scrollbar.vertical,
+    .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+      background: transparent !important;
+      border: 0 !important;
+      box-shadow: none !important;
     }
   </style>
 </head>
-<body>
+<body data-terminal-location="${this.location}">
   <div id="tab-bar"></div>
   <div id="terminal-container"></div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
