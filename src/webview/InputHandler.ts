@@ -106,11 +106,11 @@ export function createKeyEventHandler(deps: KeyHandlerDeps): (event: KeyboardEve
         return true;
 
       case "v":
-        // If clipboard API is unavailable, let the browser/xterm handle paste natively
-        if (!clipboard) {
-          return true;
-        }
-        void handlePaste(terminal, clipboard);
+        // Let xterm.js handle paste natively via browser paste event on its textarea.
+        // Both VS Code and vscode-sidebar-terminal use this approach.
+        // Returning false tells xterm to skip its own keydown processing,
+        // but the browser's native Cmd+V still fires the paste event which
+        // xterm captures on its textarea and routes through onData.
         return false;
 
       case "k":
