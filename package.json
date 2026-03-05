@@ -30,7 +30,8 @@
   ],
   "activationEvents": [
     "onView:anywhereTerminal.sidebar",
-    "onView:anywhereTerminal.panel"
+    "onView:anywhereTerminal.panel",
+    "onCommand:anywhereTerminal.newTerminalInEditor"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -65,7 +66,13 @@
           "type": "webview"
         }
       ]
-    }
+    },
+    "commands": [
+      {
+        "command": "anywhereTerminal.newTerminalInEditor",
+        "title": "AnyWhere Terminal: New Terminal in Editor"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",

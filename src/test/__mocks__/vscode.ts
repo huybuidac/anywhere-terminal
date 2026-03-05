@@ -35,9 +35,73 @@ export const extensions = {
 
 // ─── window ─────────────────────────────────────────────────────────
 
+/** Creates a mock WebviewPanel for testing. */
+function createMockWebviewPanel(
+  _viewType: string,
+  title: string,
+  _showOptions: unknown,
+  options?: { enableScripts?: boolean; retainContextWhenHidden?: boolean; localResourceRoots?: unknown[] },
+) {
+  const messageHandlers: Array<(msg: unknown) => void> = [];
+  const disposeHandlers: Array<() => void> = [];
+  const viewStateHandlers: Array<(e: { webviewPanel: { visible: boolean } }) => void> = [];
+
+  const panel = {
+    title,
+    visible: true,
+    webview: {
+      html: "",
+      options: options ?? {},
+      cspSource: "https://mock.csp.source",
+      asWebviewUri: (uri: { fsPath: string }) => uri.fsPath,
+      onDidReceiveMessage: (handler: (msg: unknown) => void) => {
+        messageHandlers.push(handler);
+        return { dispose: () => {} };
+      },
+      postMessage: (_msg: unknown) => Promise.resolve(true),
+    },
+    onDidDispose: (handler: () => void) => {
+      disposeHandlers.push(handler);
+      return { dispose: () => {} };
+    },
+    onDidChangeViewState: (handler: (e: { webviewPanel: { visible: boolean } }) => void) => {
+      viewStateHandlers.push(handler);
+      return { dispose: () => {} };
+    },
+    dispose: () => {
+      for (const handler of disposeHandlers) {
+        handler();
+      }
+    },
+    // Test helpers
+    __messageHandlers: messageHandlers,
+    __disposeHandlers: disposeHandlers,
+    __viewStateHandlers: viewStateHandlers,
+  };
+  return panel;
+}
+
 export const window = {
   showInformationMessage: () => {},
   showErrorMessage: () => {},
+  createWebviewPanel: createMockWebviewPanel,
+};
+
+// ─── ViewColumn ─────────────────────────────────────────────────────
+
+export const ViewColumn = {
+  Active: -1,
+  Beside: -2,
+  One: 1,
+  Two: 2,
+};
+
+// ─── commands ───────────────────────────────────────────────────────
+
+export const commands = {
+  registerCommand: (_command: string, _callback: (...args: unknown[]) => unknown) => ({
+    dispose: () => {},
+  }),
 };
 
 // ─── Test Helpers (for configuring mock state) ──────────────────────

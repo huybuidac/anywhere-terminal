@@ -18,3 +18,4 @@ coverage/
 .drafts
 cyberk-flow/memory.db*
 *.vsix
+session-ses_*
