@@ -17,39 +17,39 @@ Create a **single, fully functional terminal** in the Primary Sidebar using xter
 
 #### 1.1 Project Scaffolding (~2h)
 - [x] Extension already scaffolded with `yo code` (TypeScript + esbuild)
-- [ ] Add runtime dependencies: `@xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-web-links`
-- [ ] Configure esbuild to:
+- [x] Add runtime dependencies: `@xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-web-links`
+- [x] Configure esbuild to:
   - Bundle extension host code (Node.js target)
   - Bundle webview code separately (browser target)
   - Externalize `vscode` and `node-pty`
-- [ ] Set up `media/` directory for webview assets
-- [ ] Configure `.vscodeignore` for clean packaging
+- [x] Set up `media/` directory for webview assets
+- [x] Configure `.vscodeignore` for clean packaging
 
 #### 1.2 Define View Container & View (~1h)
-- [ ] Add `viewsContainers.activitybar` entry in `package.json`:
+- [x] Add `viewsContainers.activitybar` entry in `package.json`:
   - id: `anywhereTerminal`
   - title: "AnyWhere Terminal"
   - icon: terminal icon (SVG or product icon `$(terminal)`)
-- [ ] Add `views.anywhereTerminal` entry:
+- [x] Add `views.anywhereTerminal` entry:
   - id: `anywhereTerminal.sidebar`
   - name: "Terminal"
   - type: `webview`
-- [ ] Register activation event: `onView:anywhereTerminal.sidebar`
+- [x] Register activation event: `onView:anywhereTerminal.sidebar`
 
 #### 1.3 Implement WebviewViewProvider (~4h)
-- [ ] Create `src/providers/TerminalViewProvider.ts`
+- [x] Create `src/providers/TerminalViewProvider.ts`
   - Implements `vscode.WebviewViewProvider`
   - `resolveWebviewView()`:
     - Set `enableScripts: true`
     - Set `retainContextWhenHidden: true`
     - Set `localResourceRoots` to extension's media directory
     - Generate and set HTML content
-- [ ] Create `getHtmlForWebview()` function:
+- [x] Create `getHtmlForWebview()` function:
   - CSP with nonce-based script security
   - Load xterm.css
   - Load bundled webview.js
   - Include `<div id="terminal-container">` mount point
-- [ ] Register provider in `extension.ts`:
+- [x] Register provider in `extension.ts`:
   ```typescript
   vscode.window.registerWebviewViewProvider(
     'anywhereTerminal.sidebar',
@@ -59,42 +59,42 @@ Create a **single, fully functional terminal** in the Primary Sidebar using xter
   ```
 
 #### 1.4 Implement node-pty Integration (~3h)
-- [ ] Create `src/pty/ptyManager.ts`:
+- [x] Create `src/pty/ptyManager.ts`:
   - Dynamic require to load VS Code's built-in node-pty:
     ```typescript
     const modulePath = path.join(vscode.env.appRoot, 'node_modules.asar', 'node-pty');
     ```
   - Handle webpack/esbuild require: `__non_webpack_require__` pattern
-- [ ] Create `src/pty/ptySession.ts`:
+- [x] Create `src/pty/ptySession.ts`:
   - `PtySession` class wrapping a single PTY process
   - `spawn(shell, args, options)` - create PTY with cols/rows/cwd/env
   - `write(data)` - forward input to PTY
   - `resize(cols, rows)` - resize PTY
   - `kill()` - terminate PTY process
   - Events: `onData`, `onExit`
-- [ ] Shell detection for macOS:
+- [x] Shell detection for macOS:
   - Use `process.env.SHELL` (defaults to `/bin/zsh` on macOS Catalina+)
   - Fallback chain: `$SHELL` → `/bin/zsh` → `/bin/bash`
 
 #### 1.5 Implement Webview Terminal (xterm.js) (~4h)
-- [ ] Create `src/webview/main.ts` (bundled separately for browser):
+- [x] Create `src/webview/main.ts` (bundled separately for browser):
   - Initialize xterm.js `Terminal` instance
   - Load `FitAddon` and `WebLinksAddon` (always loaded — trivial, high UX value)
   - Open terminal in `#terminal-container`
   - Wire up `acquireVsCodeApi()` for messaging
-- [ ] Input handling:
+- [x] Input handling:
   - `terminal.onData(data)` → `vscode.postMessage({ type: 'input', data })`
-- [ ] Output handling:
+- [x] Output handling:
   - `window.addEventListener('message', ...)` → on `type: 'output'` → `terminal.write(data)`
-- [ ] Resize handling:
+- [x] Resize handling:
   - `ResizeObserver` on container → `fitAddon.fit()` → send `{ type: 'resize', cols, rows }`
   - Debounce resize events at ~100ms
 
 #### 1.6 Implement IPC Messaging (~3h)
-- [ ] Wire messaging directly in `TerminalViewProvider` (no separate MessageBridge abstraction — per design, messages route through the ViewProvider):
+- [x] Wire messaging directly in `TerminalViewProvider` (no separate MessageBridge abstraction — per design, messages route through the ViewProvider):
   - Extension → WebView: `webviewView.webview.postMessage(msg)`
   - WebView → Extension: `webviewView.webview.onDidReceiveMessage(handler)`
-- [ ] Message protocol (Phase 1):
+- [x] Message protocol (Phase 1):
   ```typescript
   // WebView → Extension
   { type: 'ready' }
@@ -106,57 +106,57 @@ Create a **single, fully functional terminal** in the Primary Sidebar using xter
   { type: 'output', data: string }
   { type: 'exit', code: number }
   ```
-- [ ] Output buffering on extension side:
+- [x] Output buffering on extension side:
   - Collect PTY output chunks into a buffer string
   - Flush every ~8ms via `setInterval` (compromise between VS Code's 5ms and reference's 16ms)
   - Immediate flush if buffer exceeds threshold (e.g., 64KB)
-- [ ] Flow control (backpressure):
+- [x] Flow control (backpressure):
   - Track unacknowledged bytes sent to webview
   - When unacked exceeds high watermark (100K chars) → `ptyProcess.pause()`
   - Webview sends `ack` message after writing each batch (5K batch size)
   - When unacked drops below low watermark (5K chars) → `ptyProcess.resume()`
 
 #### 1.6a Basic Theme Integration (~1h)
-- [ ] Read VS Code CSS variables in webview on startup:
+- [x] Read VS Code CSS variables in webview on startup:
   - `--vscode-terminal-background`, `--vscode-terminal-foreground`
   - `--vscode-terminalCursor-foreground`, `--vscode-terminal-selectionBackground`
   - All 16 ANSI color variables (`--vscode-terminal-ansiBlack` through `--vscode-terminal-ansiBrightWhite`)
-- [ ] Apply as xterm.js `terminal.options.theme` on init
-- [ ] Monitor theme changes via `MutationObserver` on `<body>` class changes → re-read and re-apply
+- [x] Apply as xterm.js `terminal.options.theme` on init
+- [x] Monitor theme changes via `MutationObserver` on `<body>` class changes → re-read and re-apply
 
 #### 1.7 Basic Clipboard (macOS) (~2h)
-- [ ] Implement `attachCustomKeyEventHandler` on xterm.js:
+- [x] Implement `attachCustomKeyEventHandler` on xterm.js:
   - Detect `Cmd+C`:
     - If selection exists → `navigator.clipboard.writeText(term.getSelection())`, return `false`
     - If no selection → return `true` (let xterm send SIGINT `\x03`)
   - Detect `Cmd+V`:
     - Read from clipboard → `term.paste(text)`, return `false`
-- [ ] Ensure `Ctrl+C` always sends SIGINT (standard terminal behavior)
+- [x] Ensure `Ctrl+C` always sends SIGINT (standard terminal behavior)
 
 #### 1.8 Manual Testing (~2h)
-- [ ] Run with F5, open AnyWhere Terminal in Activity Bar
-- [ ] Verify:
-  - [ ] Shell prompt appears (zsh/bash)
-  - [ ] Commands execute: `ls`, `pwd`, `git status`, `node -v`
-  - [ ] Output renders correctly (colors, formatting)
-  - [ ] Resize works when dragging sidebar width
-  - [ ] Cmd+C copies selected text
-  - [ ] Cmd+V pastes from clipboard
-  - [ ] Ctrl+C interrupts running process
-  - [ ] Terminal survives sidebar collapse/expand (if `retainContextWhenHidden`)
-  - [ ] Terminal theme matches current VS Code theme (dark/light)
-  - [ ] URLs in output are clickable
-  - [ ] Heavy output (`find / -name "*.js" 2>/dev/null`) does not crash (flow control)
+- [x] Run with F5, open AnyWhere Terminal in Activity Bar
+- [x] Verify:
+  - [x] Shell prompt appears (zsh/bash)
+  - [x] Commands execute: `ls`, `pwd`, `git status`, `node -v`
+  - [x] Output renders correctly (colors, formatting)
+  - [x] Resize works when dragging sidebar width
+  - [x] Cmd+C copies selected text
+  - [x] Cmd+V pastes from clipboard
+  - [x] Ctrl+C interrupts running process
+  - [x] Terminal survives sidebar collapse/expand (if `retainContextWhenHidden`)
+  - [x] Terminal theme matches current VS Code theme (dark/light)
+  - [x] URLs in output are clickable
+  - [x] Heavy output (`find / -name "*.js" 2>/dev/null`) does not crash (flow control)
 
 ### Phase 1 Acceptance Criteria
-- [ ] Terminal appears in Primary Sidebar with working shell
-- [ ] Commands execute and output displays correctly
-- [ ] Copy/paste works
-- [ ] Resize works
-- [ ] Terminal colors match active VS Code theme
-- [ ] URLs in terminal output are clickable
-- [ ] Heavy output does not crash or freeze the extension (flow control active)
-- [ ] No crashes or extension host hangs
+- [x] Terminal appears in Primary Sidebar with working shell
+- [x] Commands execute and output displays correctly
+- [x] Copy/paste works
+- [x] Resize works
+- [x] Terminal colors match active VS Code theme
+- [x] URLs in terminal output are clickable
+- [x] Heavy output does not crash or freeze the extension (flow control active)
+- [x] No crashes or extension host hangs
 
 ---
 
