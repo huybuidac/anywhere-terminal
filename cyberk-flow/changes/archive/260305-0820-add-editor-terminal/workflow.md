@@ -39,7 +39,7 @@
 - [x] Post-merge sanity check
 - [x] Extract knowledge + retrospective
 - [x] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
-- [ ] Archive change: `cf_archive` <!-- auto-ticked by script -->
+- [x] Archive change: `cf_archive` <!-- auto-ticked by script -->
 
 ## Notes
 
