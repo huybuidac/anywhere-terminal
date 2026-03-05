@@ -29,7 +29,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onView:anywhereTerminal.sidebar"
+    "onView:anywhereTerminal.sidebar",
+    "onView:anywhereTerminal.panel"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -40,12 +41,26 @@
           "title": "AnyWhere Terminal",
           "icon": "media/icon.svg"
         }
+      ],
+      "panel": [
+        {
+          "id": "anywhereTerminalPanel",
+          "title": "AnyWhere Terminal",
+          "icon": "media/icon.svg"
+        }
       ]
     },
     "views": {
       "anywhereTerminal": [
         {
           "id": "anywhereTerminal.sidebar",
+          "name": "AnyWhere Terminal",
+          "type": "webview"
+        }
+      ],
+      "anywhereTerminalPanel": [
+        {
+          "id": "anywhereTerminal.panel",
           "name": "AnyWhere Terminal",
           "type": "webview"
         }

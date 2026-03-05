@@ -10,6 +10,15 @@ export function activate(context: vscode.ExtensionContext) {
       webviewOptions: { retainContextWhenHidden: true },
     }),
   );
+
+  // Panel view
+  const panelProvider = new TerminalViewProvider(context.extensionUri, "panel");
+
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(TerminalViewProvider.panelViewType, panelProvider, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+  );
 }
 
 export function deactivate() {}

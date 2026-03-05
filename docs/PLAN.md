@@ -168,14 +168,14 @@ Terminal works in **all locations** (Sidebar, Panel, Editor) with **multiple tab
 ### Tasks
 
 #### 2.1 Panel Terminal View (~2h)
-- [ ] Add `viewsContainers.panel` entry in `package.json`:
+- [x] Add `viewsContainers.panel` entry in `package.json`:
   - id: `anywhereTerminalPanel`
   - title: "AnyWhere Terminal"
-- [ ] Add `views.anywhereTerminalPanel` entry:
+- [x] Add `views.anywhereTerminalPanel` entry:
   - id: `anywhereTerminal.panel`
   - type: `webview`
-- [ ] Reuse `TerminalViewProvider` for panel view
-- [ ] Each view instance gets its own PTY session
+- [x] Reuse `TerminalViewProvider` for panel view
+- [x] Each view instance gets its own PTY session
 
 #### 2.2 Editor Terminal (WebviewPanel) (~4h)
 - [ ] Create `src/providers/TerminalEditorProvider.ts`:
