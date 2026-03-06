@@ -197,16 +197,16 @@ Terminal works in **all locations** (Sidebar, Panel, Editor) with **multiple tab
 - [x] Terminal number recycling (1-10)
 
 #### 2.4 Multi-Tab UI in WebView (~6h)
-- [ ] Create tab bar component in webview HTML/CSS:
+- [x] Create tab bar component in webview HTML/CSS:
   - Horizontal tab strip at top of terminal area
   - Each tab: name label + close (x) button
   - Active tab highlighted
   - "+" button to create new tab
-- [ ] Tab switching logic:
+- [x] Tab switching logic:
   - Only one xterm.js instance visible at a time per view
   - Use CSS `display: none/block` to switch (preserve scrollback)
   - OR: destroy/recreate xterm instances (simpler, loses local state)
-- [ ] Tab message protocol:
+- [x] Tab message protocol:
   ```typescript
   // WebView → Extension
   { type: 'createTab' }
@@ -218,7 +218,7 @@ Terminal works in **all locations** (Sidebar, Panel, Editor) with **multiple tab
   { type: 'tabList', tabs: Array<{ id, name, isActive }> }
   { type: 'tabRemoved', tabId: string }
   ```
-- [ ] Input routing: include `tabId` in input/resize messages
+- [x] Input routing: include `tabId` in input/resize messages
 
 #### 2.5 Secondary Sidebar Support (~2h)
 - [ ] Check if `contribSecondarySideBar` API is finalized in target VS Code version

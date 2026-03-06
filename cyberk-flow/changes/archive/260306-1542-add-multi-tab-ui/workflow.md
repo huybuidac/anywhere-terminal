@@ -36,10 +36,10 @@
 
 ## Archive
 
-- [ ] Post-merge sanity check
-- [ ] Extract knowledge + retrospective
-- [ ] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
-- [ ] Archive change: `cf_archive` <!-- auto-ticked by script -->
+- [x] Post-merge sanity check
+- [x] Extract knowledge + retrospective
+- [x] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
+- [x] Archive change: `cf_archive` <!-- auto-ticked by script -->
 
 ## Notes
 
@@ -52,6 +52,12 @@ Key decisions:
 - Use CSS `display: none/block` for tab switching (already implemented in `switchTab()`)
 - Ctrl+Tab / Ctrl+Shift+Tab for keyboard tab cycling
 - Tab bar styling uses VS Code CSS variables for theme consistency
+
+## Retrospective
+
+**Estimate vs Actual**: Appetite was standard complexity, took ~1 day (as expected)
+**What worked**: Fastlane mode with auto-approval; clear separation between extension host (already complete) and webview UI (the gap); extracting TabBarUtils for testability; comprehensive test coverage (22 new tests)
+**What to improve**: Could have identified the webview-only scope earlier in discovery phase
 
 ## Revision Log
 
@@ -69,4 +75,4 @@ Key decisions:
 | 2026-03-06 | Implement | Task 1_4: Added Ctrl+Tab/Ctrl+Shift+Tab keyboard shortcuts | Extracted handleTabKeyboardShortcut for testability; 7 tests pass |
 | 2026-03-06 | Implement | Task 2_1: removeTerminal() already calls updateTabBar() + handles empty state | Completed as part of task 1_3 integration |
 | 2026-03-06 | Implement | Task 3_1: Verify gate passed — check-types ✅, lint ✅, test:unit ✅ (201 tests, 22 new) | All gates green |
-| 2026-03-06 | Implement | Oracle + Code Review: 0 must-fix, 0 nice-to-fix. Fastlane: auto-approved | All specs satisfied, no issues found |
+| 2026-03-06 | Archive | Retrospective completed | Estimate vs actual aligned; fastlane worked well |
