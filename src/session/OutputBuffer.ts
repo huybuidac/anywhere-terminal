@@ -52,6 +52,9 @@ export class OutputBuffer {
   /** Whether the PTY is currently paused due to backpressure. */
   private _isPaused = false;
 
+  /** Whether output flushing is paused (view hidden). */
+  private _isOutputPaused = false;
+
   /** One-shot flush timer. Started on first append, cleared after flush or on dispose. */
   private _flushTimer: ReturnType<typeof setTimeout> | undefined;
   /** Whether this buffer has been disposed. */
@@ -71,7 +74,7 @@ export class OutputBuffer {
     /** Tab/session ID for output messages. */
     private readonly _tabId: string,
     /** Webview to send output messages to. */
-    private readonly _webview: MessageSender,
+    private _webview: MessageSender,
     /** PTY process for pause/resume flow control. */
     private readonly _pty: FlowControllable,
   ) {}
@@ -89,6 +92,11 @@ export class OutputBuffer {
 
     this._chunks.push(data);
     this._bufferSize += data.length;
+
+    // When output is paused, accumulate data but don't start flush timer
+    if (this._isOutputPaused) {
+      return;
+    }
 
     // Start a one-shot flush timer on first data (or if no timer is pending)
     if (!this._flushTimer) {
@@ -133,6 +141,48 @@ export class OutputBuffer {
       this._isPaused = false;
       this._pty.resume();
     }
+  }
+
+  /**
+   * Pause output flushing. Stops the flush timer.
+   * Data appended via append() is still buffered but not flushed to the webview.
+   * Flow control (PTY pause/resume) continues to operate independently.
+   */
+  pauseOutput(): void {
+    if (this._disposed || this._isOutputPaused) {
+      return;
+    }
+    this._isOutputPaused = true;
+
+    // Stop the flush timer — data will accumulate but not be sent
+    if (this._flushTimer) {
+      clearTimeout(this._flushTimer);
+      this._flushTimer = undefined;
+    }
+  }
+
+  /**
+   * Resume output flushing. Restarts the flush timer.
+   * If there is buffered data, flush immediately.
+   */
+  resumeOutput(): void {
+    if (this._disposed || !this._isOutputPaused) {
+      return;
+    }
+    this._isOutputPaused = false;
+
+    // Flush any accumulated data immediately
+    if (this._chunks.length > 0) {
+      this._flush();
+    }
+  }
+
+  /**
+   * Update the webview reference. Used when a webview is re-created
+   * but the session (and its OutputBuffer) survives.
+   */
+  updateWebview(webview: MessageSender): void {
+    this._webview = webview;
   }
 
   /**

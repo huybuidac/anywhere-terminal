@@ -58,21 +58,32 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       }),
     );
 
-    // 4. Wire visibility handler (for deferred resize on re-show)
+    // 4. Wire visibility handler (for deferred resize on re-show + output pause/resume)
     disposables.push(
       webviewView.onDidChangeVisibility(() => {
-        if (webviewView.visible && this._ready) {
-          this.safePostMessage(webviewView.webview, { type: "viewShow" });
+        const viewId = this.getViewId();
+        if (webviewView.visible) {
+          // Resume output flushing when view becomes visible
+          this.sessionManager.resumeOutputForView(viewId);
+          if (this._ready) {
+            this.safePostMessage(webviewView.webview, { type: "viewShow" });
+          }
+        } else {
+          // Pause output flushing when view becomes hidden
+          this.sessionManager.pauseOutputForView(viewId);
         }
       }),
     );
 
-    // 5. Wire dispose handler — clean up all subscriptions and sessions
+    // 5. Wire dispose handler — clean up subscriptions but preserve sessions for re-creation.
+    // Sessions are anchored to the Extension Host lifecycle, not the WebView lifecycle.
+    // They will be restored when resolveWebviewView is called again.
     webviewView.onDidDispose(() => {
       for (const d of disposables) {
         d.dispose();
       }
-      this.sessionManager.destroyAllForView(this.getViewId());
+      // Pause output for the view — sessions survive but don't flush to a disposed webview
+      this.sessionManager.pauseOutputForView(this.getViewId());
       this._view = undefined;
       this._ready = false;
     });
@@ -175,9 +186,11 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
   /**
    * Handle the 'ready' message from the webview.
-   * Creates a session via SessionManager and sends 'init' to the webview.
+   * On first creation: creates a session via SessionManager and sends 'init'.
+   * On re-creation: restores existing sessions with scrollback data.
    *
    * See: specs/ipc-wiring/spec.md#Ready-Handshake-Wiring
+   * See: specs/view-lifecycle-resilience/spec.md#Scrollback-Cache-Replay-on-Webview-Re-creation
    */
   private onReady(webviewView: vscode.WebviewView): void {
     // Mark webview as ready — gates outbound messages
@@ -185,23 +198,56 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
     try {
       const viewId = this.getViewId();
+      const existingTabs = this.sessionManager.getTabsForView(viewId);
 
-      // Create initial session via SessionManager
-      this.sessionManager.createSession(viewId, webviewView.webview);
+      if (existingTabs.length > 0) {
+        // Re-creation scenario: sessions already exist for this view
+        // Update webview references for all existing sessions
+        this.sessionManager.updateWebviewForView(viewId, webviewView.webview);
 
-      // Get tabs for the init message
-      const tabs = this.sessionManager.getTabsForView(viewId);
+        // Send 'init' message with existing tabs
+        this.safePostMessage(webviewView.webview, {
+          type: "init",
+          tabs: existingTabs,
+          config: {
+            fontSize: 14,
+            cursorBlink: true,
+            scrollback: 10000,
+          },
+        });
 
-      // Send 'init' message to the webview with default config
-      this.safePostMessage(webviewView.webview, {
-        type: "init",
-        tabs,
-        config: {
-          fontSize: 14,
-          cursorBlink: true,
-          scrollback: 10000,
-        },
-      });
+        // Send 'restore' messages with scrollback data for each session
+        for (const tab of existingTabs) {
+          const scrollbackData = this.sessionManager.getScrollbackData(tab.id);
+          if (scrollbackData) {
+            this.safePostMessage(webviewView.webview, {
+              type: "restore",
+              tabId: tab.id,
+              data: scrollbackData,
+            });
+          }
+        }
+
+        // Resume output flushing for the view
+        this.sessionManager.resumeOutputForView(viewId);
+      } else {
+        // First-time creation: create initial session
+        this.sessionManager.createSession(viewId, webviewView.webview);
+
+        // Get tabs for the init message
+        const tabs = this.sessionManager.getTabsForView(viewId);
+
+        // Send 'init' message to the webview with default config
+        this.safePostMessage(webviewView.webview, {
+          type: "init",
+          tabs,
+          config: {
+            fontSize: 14,
+            cursorBlink: true,
+            scrollback: 10000,
+          },
+        });
+      }
     } catch (err) {
       // Spawn failure: send error message
       console.error("[AnyWhere Terminal] Failed to initialize terminal:", err);
@@ -233,5 +279,15 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    */
   getViewId(): string {
     return this.location === "sidebar" ? TerminalViewProvider.sidebarViewType : TerminalViewProvider.panelViewType;
+  }
+
+  /**
+   * Get the active session ID for this view.
+   * Returns undefined if no sessions exist or no session is active.
+   */
+  getActiveSessionId(): string | undefined {
+    const tabs = this.sessionManager.getTabsForView(this.getViewId());
+    const activeTab = tabs.find((t) => t.isActive);
+    return activeTab?.id;
   }
 }

@@ -93,6 +93,9 @@ vi.mock("./OutputBuffer", () => {
     handleAck = vi.fn();
     dispose = vi.fn();
     flush = vi.fn();
+    pauseOutput = vi.fn();
+    resumeOutput = vi.fn();
+    updateWebview = vi.fn();
     constructor(
       public _tabId: string,
       public _webview: unknown,
@@ -746,6 +749,123 @@ describe("SessionManager: handleAck", () => {
     const sm = new SessionManager();
 
     expect(() => sm.handleAck("nonexistent", 5000)).not.toThrow();
+
+    sm.dispose();
+  });
+});
+
+// ─── updateWebviewForView ───────────────────────────────────────────
+
+describe("SessionManager: updateWebviewForView", () => {
+  it("updates webview reference for all sessions in a view", () => {
+    const sm = new SessionManager();
+    const webview1 = createMockWebview();
+    const webview2 = createMockWebview();
+
+    const id1 = sm.createSession("sidebar", webview1);
+    const id2 = sm.createSession("sidebar", webview1);
+
+    sm.updateWebviewForView("sidebar", webview2);
+
+    const session1 = sm.getSession(id1);
+    const session2 = sm.getSession(id2);
+    expect(session1!.webview).toBe(webview2);
+    expect(session2!.webview).toBe(webview2);
+
+    // OutputBuffer.updateWebview should have been called
+    expect(session1!.outputBuffer.updateWebview).toHaveBeenCalledWith(webview2);
+    expect(session2!.outputBuffer.updateWebview).toHaveBeenCalledWith(webview2);
+
+    sm.dispose();
+  });
+
+  it("silently ignores unknown viewId", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    expect(() => sm.updateWebviewForView("nonexistent", webview)).not.toThrow();
+
+    sm.dispose();
+  });
+});
+
+// ─── getScrollbackData ──────────────────────────────────────────────
+
+describe("SessionManager: getScrollbackData", () => {
+  it("returns joined scrollback cache for existing session", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    const id = sm.createSession("sidebar", webview);
+    const ptyMock = mockPtySessions.find((p) => p.id === id);
+
+    // Simulate PTY output
+    ptyMock!.onData?.("hello");
+    ptyMock!.onData?.(" world");
+
+    expect(sm.getScrollbackData(id)).toBe("hello world");
+
+    sm.dispose();
+  });
+
+  it("returns empty string for non-existent session", () => {
+    const sm = new SessionManager();
+
+    expect(sm.getScrollbackData("nonexistent")).toBe("");
+
+    sm.dispose();
+  });
+});
+
+// ─── pauseOutputForView / resumeOutputForView ───────────────────────
+
+describe("SessionManager: pauseOutputForView / resumeOutputForView", () => {
+  it("pauses output for all sessions in a view", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    const id1 = sm.createSession("sidebar", webview);
+    const id2 = sm.createSession("sidebar", webview);
+
+    sm.pauseOutputForView("sidebar");
+
+    const session1 = sm.getSession(id1);
+    const session2 = sm.getSession(id2);
+    expect(session1!.outputBuffer.pauseOutput).toHaveBeenCalled();
+    expect(session2!.outputBuffer.pauseOutput).toHaveBeenCalled();
+
+    sm.dispose();
+  });
+
+  it("resumes output for all sessions in a view", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    const id1 = sm.createSession("sidebar", webview);
+    const id2 = sm.createSession("sidebar", webview);
+
+    sm.resumeOutputForView("sidebar");
+
+    const session1 = sm.getSession(id1);
+    const session2 = sm.getSession(id2);
+    expect(session1!.outputBuffer.resumeOutput).toHaveBeenCalled();
+    expect(session2!.outputBuffer.resumeOutput).toHaveBeenCalled();
+
+    sm.dispose();
+  });
+
+  it("silently ignores unknown viewId for pause", () => {
+    const sm = new SessionManager();
+
+    expect(() => sm.pauseOutputForView("nonexistent")).not.toThrow();
+
+    sm.dispose();
+  });
+
+  it("silently ignores unknown viewId for resume", () => {
+    const sm = new SessionManager();
+
+    expect(() => sm.resumeOutputForView("nonexistent")).not.toThrow();
 
     sm.dispose();
   });

@@ -33,6 +33,116 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // ─── Terminal Commands ──────────────────────────────────────────
+
+  // Helper: get the focused provider (sidebar or panel). Defaults to sidebar.
+  const getFocusedProvider = (): TerminalViewProvider => {
+    // If panel view is visible and sidebar is not, use panel
+    if (panelProvider.view?.visible && !sidebarProvider.view?.visible) {
+      return panelProvider;
+    }
+    return sidebarProvider;
+  };
+
+  // newTerminal: create a new terminal tab in the focused view
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.newTerminal", () => {
+      const provider = getFocusedProvider();
+      const view = provider.view;
+      if (!view) {
+        return;
+      }
+      const viewId = provider.getViewId();
+      const newSessionId = sessionManager.createSession(viewId, view.webview);
+      const newSession = sessionManager.getSession(newSessionId);
+      if (newSession) {
+        try {
+          void (
+            view.webview.postMessage({
+              type: "tabCreated",
+              tabId: newSessionId,
+              name: newSession.name,
+            }) as Thenable<boolean>
+          ).then(undefined, () => {});
+        } catch {
+          // Webview may be disposed
+        }
+      }
+    }),
+  );
+
+  // killTerminal: destroy the active session in the focused view
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.killTerminal", () => {
+      const provider = getFocusedProvider();
+      const activeSessionId = provider.getActiveSessionId();
+      if (!activeSessionId) {
+        return;
+      }
+      sessionManager.destroySession(activeSessionId);
+      const view = provider.view;
+      if (view) {
+        try {
+          void (
+            view.webview.postMessage({
+              type: "tabRemoved",
+              tabId: activeSessionId,
+            }) as Thenable<boolean>
+          ).then(undefined, () => {});
+        } catch {
+          // Webview may be disposed
+        }
+      }
+    }),
+  );
+
+  // clearTerminal: clear scrollback for the active session in the focused view
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.clearTerminal", () => {
+      const provider = getFocusedProvider();
+      const activeSessionId = provider.getActiveSessionId();
+      if (!activeSessionId) {
+        return;
+      }
+      sessionManager.clearScrollback(activeSessionId);
+      const view = provider.view;
+      if (view) {
+        try {
+          void (
+            view.webview.postMessage({
+              type: "clear",
+              tabId: activeSessionId,
+            }) as Thenable<boolean>
+          ).then(undefined, () => {});
+        } catch {
+          // Webview may be disposed
+        }
+      }
+    }),
+  );
+
+  // focusSidebar: focus the sidebar terminal view
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.focusSidebar", () => {
+      void vscode.commands.executeCommand("anywhereTerminal.sidebar.focus");
+    }),
+  );
+
+  // focusPanel: focus the panel terminal view
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.focusPanel", () => {
+      void vscode.commands.executeCommand("anywhereTerminal.panel.focus");
+    }),
+  );
+
+  // moveToSecondary: focus sidebar then open "Move View" dialog
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.moveToSecondary", async () => {
+      await vscode.commands.executeCommand("anywhereTerminal.sidebar.focus");
+      await vscode.commands.executeCommand("workbench.action.moveView");
+    }),
+  );
+
   // Register SessionManager for disposal on extension deactivation
   context.subscriptions.push(sessionManager);
 }

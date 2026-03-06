@@ -31,7 +31,11 @@
   "activationEvents": [
     "onView:anywhereTerminal.sidebar",
     "onView:anywhereTerminal.panel",
-    "onCommand:anywhereTerminal.newTerminalInEditor"
+    "onCommand:anywhereTerminal.newTerminalInEditor",
+    "onCommand:anywhereTerminal.newTerminal",
+    "onCommand:anywhereTerminal.focusSidebar",
+    "onCommand:anywhereTerminal.focusPanel",
+    "onCommand:anywhereTerminal.moveToSecondary"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -71,8 +75,48 @@
       {
         "command": "anywhereTerminal.newTerminalInEditor",
         "title": "AnyWhere Terminal: New Terminal in Editor"
+      },
+      {
+        "command": "anywhereTerminal.newTerminal",
+        "title": "AnyWhere Terminal: New Terminal",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "anywhereTerminal.killTerminal",
+        "title": "AnyWhere Terminal: Kill Terminal",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "anywhereTerminal.clearTerminal",
+        "title": "AnyWhere Terminal: Clear Terminal"
+      },
+      {
+        "command": "anywhereTerminal.focusSidebar",
+        "title": "AnyWhere Terminal: Focus Sidebar"
+      },
+      {
+        "command": "anywhereTerminal.focusPanel",
+        "title": "AnyWhere Terminal: Focus Panel"
+      },
+      {
+        "command": "anywhereTerminal.moveToSecondary",
+        "title": "AnyWhere Terminal: Move to Secondary Sidebar"
       }
-    ]
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "anywhereTerminal.newTerminal",
+          "when": "view == anywhereTerminal.sidebar || view == anywhereTerminal.panel",
+          "group": "navigation"
+        },
+        {
+          "command": "anywhereTerminal.killTerminal",
+          "when": "view == anywhereTerminal.sidebar || view == anywhereTerminal.panel",
+          "group": "navigation"
+        }
+      ]
+    }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",

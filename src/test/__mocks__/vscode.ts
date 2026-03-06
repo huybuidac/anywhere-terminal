@@ -85,6 +85,9 @@ export const window = {
   showInformationMessage: () => {},
   showErrorMessage: () => {},
   createWebviewPanel: createMockWebviewPanel,
+  registerWebviewViewProvider: (_viewType: string, _provider: unknown, _options?: unknown) => ({
+    dispose: () => {},
+  }),
 };
 
 // ─── ViewColumn ─────────────────────────────────────────────────────
@@ -102,6 +105,7 @@ export const commands = {
   registerCommand: (_command: string, _callback: (...args: unknown[]) => unknown) => ({
     dispose: () => {},
   }),
+  executeCommand: (_command: string, ..._args: unknown[]) => Promise.resolve(),
 };
 
 // ─── Test Helpers (for configuring mock state) ──────────────────────

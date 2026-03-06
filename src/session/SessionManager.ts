@@ -265,6 +265,73 @@ export class SessionManager {
     session.outputBuffer.handleAck(charCount);
   }
 
+  /**
+   * Update the webview reference for all sessions belonging to a view.
+   * Used when a webview is re-created but sessions survive.
+   */
+  updateWebviewForView(viewId: string, webview: MessageSender): void {
+    const viewSessionIds = this.viewSessions.get(viewId);
+    if (!viewSessionIds) {
+      return;
+    }
+
+    for (const sid of viewSessionIds) {
+      const session = this.sessions.get(sid);
+      if (session) {
+        session.webview = webview;
+        session.outputBuffer.updateWebview(webview);
+      }
+    }
+  }
+
+  /**
+   * Get the joined scrollback cache data for a session.
+   * Returns an empty string if the session does not exist.
+   */
+  getScrollbackData(sessionId: string): string {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return "";
+    }
+    return session.scrollbackCache.join("");
+  }
+
+  /**
+   * Pause output flushing for all sessions in a view.
+   * PTY data continues to accumulate in the scrollback cache but is not flushed to the webview.
+   */
+  pauseOutputForView(viewId: string): void {
+    const viewSessionIds = this.viewSessions.get(viewId);
+    if (!viewSessionIds) {
+      return;
+    }
+
+    for (const sid of viewSessionIds) {
+      const session = this.sessions.get(sid);
+      if (session) {
+        session.outputBuffer.pauseOutput();
+      }
+    }
+  }
+
+  /**
+   * Resume output flushing for all sessions in a view.
+   * Any buffered data is flushed immediately.
+   */
+  resumeOutputForView(viewId: string): void {
+    const viewSessionIds = this.viewSessions.get(viewId);
+    if (!viewSessionIds) {
+      return;
+    }
+
+    for (const sid of viewSessionIds) {
+      const session = this.sessions.get(sid);
+      if (session) {
+        session.outputBuffer.resumeOutput();
+      }
+    }
+  }
+
   // ─── Public API: Destructive Operations (Queued) ────────────────
 
   /**

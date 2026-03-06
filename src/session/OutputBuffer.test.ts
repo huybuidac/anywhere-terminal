@@ -428,3 +428,129 @@ describe("OutputBuffer postMessage error handling", () => {
     }).not.toThrow();
   });
 });
+
+// ─── Pause / Resume Output ─────────────────────────────────────────
+
+describe("OutputBuffer pause/resume output", () => {
+  it("pauseOutput stops flush timer — data accumulates but is not sent", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("pause-1", sender, pty);
+
+    buffer.pauseOutput();
+    buffer.append("data while paused");
+
+    // Advance time — no flush should occur
+    vi.advanceTimersByTime(100);
+    expect(sender.messages).toHaveLength(0);
+
+    buffer.dispose();
+  });
+
+  it("resumeOutput flushes accumulated data immediately", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("pause-2", sender, pty);
+
+    buffer.pauseOutput();
+    buffer.append("buffered");
+
+    vi.advanceTimersByTime(100);
+    expect(sender.messages).toHaveLength(0);
+
+    buffer.resumeOutput();
+
+    expect(sender.messages).toHaveLength(1);
+    expect(sender.messages[0]).toEqual({ type: "output", tabId: "pause-2", data: "buffered" });
+
+    buffer.dispose();
+  });
+
+  it("resumeOutput restarts flush timer for future data", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("pause-3", sender, pty);
+
+    buffer.pauseOutput();
+    buffer.resumeOutput();
+
+    // Now append new data — should flush normally after timer
+    buffer.append("new data");
+    vi.advanceTimersByTime(8);
+
+    expect(sender.messages).toHaveLength(1);
+    expect(sender.messages[0]).toEqual({ type: "output", tabId: "pause-3", data: "new data" });
+
+    buffer.dispose();
+  });
+
+  it("pauseOutput is idempotent", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("pause-4", sender, pty);
+
+    buffer.pauseOutput();
+    buffer.pauseOutput(); // Should not throw
+
+    buffer.append("data");
+    vi.advanceTimersByTime(100);
+    expect(sender.messages).toHaveLength(0);
+
+    buffer.dispose();
+  });
+
+  it("resumeOutput is a no-op when not paused", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("pause-5", sender, pty);
+
+    buffer.resumeOutput(); // Should not throw or flush
+
+    buffer.append("data");
+    vi.advanceTimersByTime(8);
+    expect(sender.messages).toHaveLength(1);
+
+    buffer.dispose();
+  });
+
+  it("multiple pause/resume cycles work correctly", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("pause-6", sender, pty);
+
+    // Cycle 1: pause, accumulate, resume
+    buffer.pauseOutput();
+    buffer.append("cycle1");
+    buffer.resumeOutput();
+    expect(sender.messages).toHaveLength(1);
+    expect((sender.messages[0] as { data: string }).data).toBe("cycle1");
+
+    // Cycle 2: pause, accumulate, resume
+    buffer.pauseOutput();
+    buffer.append("cycle2");
+    buffer.resumeOutput();
+    expect(sender.messages).toHaveLength(2);
+    expect((sender.messages[1] as { data: string }).data).toBe("cycle2");
+
+    buffer.dispose();
+  });
+
+  it("updateWebview changes the target for future flushes", () => {
+    const sender1 = createMockSender();
+    const sender2 = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("update-1", sender1, pty);
+
+    buffer.append("to-sender1");
+    vi.advanceTimersByTime(8);
+    expect(sender1.messages).toHaveLength(1);
+
+    buffer.updateWebview(sender2);
+    buffer.append("to-sender2");
+    vi.advanceTimersByTime(8);
+    expect(sender2.messages).toHaveLength(1);
+    expect(sender1.messages).toHaveLength(1); // No new messages to sender1
+
+    buffer.dispose();
+  });
+});

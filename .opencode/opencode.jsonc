@@ -21,5 +21,22 @@
   },
   "permission": {
     "question": "allow"
+  },
+  "agent": {
+    "cf-build": {
+      "permission": {
+        "task": "allow"
+      }
+    },
+    "cf-plan": {
+      "permission": {
+        "task": "allow"
+      }
+    },
+    "cf-archive": {
+      "permission": {
+        "task": "allow"
+      }
+    }
   }
 }
