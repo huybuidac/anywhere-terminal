@@ -178,23 +178,23 @@ Terminal works in **all locations** (Sidebar, Panel, Editor) with **multiple tab
 - [x] Each view instance gets its own PTY session
 
 #### 2.2 Editor Terminal (WebviewPanel) (~4h)
-- [ ] Create `src/providers/TerminalEditorProvider.ts`:
+- [x] Create `src/providers/TerminalEditorProvider.ts`:
   - Use `vscode.window.createWebviewPanel()` to create editor-area terminal
   - Share the same webview HTML generation logic
   - Share the same IPC bridge pattern
-- [ ] Register command `anywhereTerminal.newTerminalInEditor`
-- [ ] Handle editor tab lifecycle (close → kill PTY)
+- [x] Register command `anywhereTerminal.newTerminalInEditor`
+- [x] Handle editor tab lifecycle (close → kill PTY)
 
 #### 2.3 Session Manager (~4h)
-- [ ] Create `src/session/SessionManager.ts`:
+- [x] Create `src/session/SessionManager.ts`:
   - Central registry: `Map<string, TerminalSession>`
   - `TerminalSession`: `{ id, pty, viewId, tabName, isActive, createdAt }`
   - `createSession(viewId, options?)` → spawn PTY, return sessionId
   - `destroySession(sessionId)` → kill PTY, clean up
   - `getSessionsForView(viewId)` → list sessions attached to a view
   - `switchActiveSession(viewId, sessionId)` → change data routing
-- [ ] Generate unique session IDs: `crypto.randomUUID()`
-- [ ] Terminal number recycling (1-10)
+- [x] Generate unique session IDs: `crypto.randomUUID()`
+- [x] Terminal number recycling (1-10)
 
 #### 2.4 Multi-Tab UI in WebView (~6h)
 - [ ] Create tab bar component in webview HTML/CSS:

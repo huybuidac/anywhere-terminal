@@ -1,14 +1,10 @@
 # editor-session-manager Specification
 
 ## Purpose
-
-Define how TerminalEditorProvider is refactored to use SessionManager.
-
-## MODIFIED Requirements
+TBD
+## Requirements
 
 ### Requirement: Editor Terminal SessionManager Integration
-
-> Original: TerminalEditorProvider manages a single PTY session per panel directly (Phase 1).
 
 `TerminalEditorProvider` SHALL accept a `SessionManager` instance and delegate all session operations to it. The `createPanel` static method MUST:
 - Accept `SessionManager` as a parameter
@@ -49,3 +45,4 @@ Define how TerminalEditorProvider is refactored to use SessionManager.
 - **And**: Both sidebar and panel providers receive the same SessionManager instance
 - **And**: The editor terminal command handler passes SessionManager to createPanel
 - **And**: SessionManager is registered for disposal on deactivation
+

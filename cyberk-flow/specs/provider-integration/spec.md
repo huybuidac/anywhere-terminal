@@ -1,14 +1,10 @@
 # provider-integration Specification
 
 ## Purpose
-
-Define how TerminalViewProvider is refactored to delegate session management to SessionManager.
-
-## MODIFIED Requirements
+TBD
+## Requirements
 
 ### Requirement: TerminalViewProvider SessionManager Integration
-
-> Original: TerminalViewProvider manages a single PTY session per view directly (Phase 1).
 
 `TerminalViewProvider` SHALL accept a `SessionManager` instance in its constructor and delegate all session operations to it. The provider MUST:
 - Remove direct `PtySession`, `OutputBuffer`, and `PtyManager` usage
@@ -53,3 +49,4 @@ The HTML generation logic (`getHtmlForWebview`) SHALL be extracted to a shared u
 - **When**: Both generate HTML for their webviews
 - **Then**: The HTML structure is identical except for `data-terminal-location` attribute
 - **And**: CSP, nonce, script/style URIs follow the same pattern
+

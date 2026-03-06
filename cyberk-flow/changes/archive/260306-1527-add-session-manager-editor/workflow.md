@@ -36,16 +36,28 @@
 
 ## Archive
 
-- [ ] Post-merge sanity check
-- [ ] Extract knowledge + retrospective
-- [ ] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
-- [ ] Archive change: `cf_archive` <!-- auto-ticked by script -->
+- [x] Post-merge sanity check
+- [x] Extract knowledge + retrospective
+- [x] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
+- [x] Archive change: `cf_archive` <!-- auto-ticked by script -->
 
 ## Notes
 
 Complexity: standard — SessionManager is a new multi-module component (operation queue, kill tracking, number recycling) + cross-cutting refactor of both providers to use it. 10+ files affected.
 
 Fastlane: auto-proceeding through all stages without user gates.
+
+### Retrospective
+
+**Estimate vs Actual**: Appetite was standard complexity, took 1 day (as expected)
+**What worked**: 
+- Comprehensive test suite (38 tests) caught edge cases early
+- Clear separation of concerns with SessionManager as central coordinator
+- Fastlane mode enabled rapid iteration without approval gates
+
+**What to improve**: 
+- Delta specs initially used MODIFIED instead of ADDED for new specs (fixed during archive)
+- Could have validated delta spec format earlier in the process
 
 ## Revision Log
 
@@ -57,3 +69,7 @@ Fastlane: auto-proceeding through all stages without user gates.
 | 2026-03-06 | Implement | Tasks 3_1, 3_2, 3_3 completed | Refactored both providers to use SessionManager, updated extension.ts wiring |
 | 2026-03-06 | Implement | Verify gate passed | Type check ✅, Lint ✅, Test (179/179) ✅, E2E N/A |
 | 2026-03-06 | Implement | Reviews passed | Oracle: 0 must-fix. Code Review: 0 must-fix. |
+| 2026-03-06 | Archive | Committed changes | feat: add-session-manager-editor — Session Manager + Editor Terminal integration (ed2ea37) |
+| 2026-03-06 | Archive | Sanity check passed | 17 files changed, aligns with expected scope, all verify gates passed |
+| 2026-03-06 | Archive | Delta specs applied | 5 specs applied: +19 requirements total |
+| 2026-03-06 | Archive | Change archived | Moved to archive/260306-1527-add-session-manager-editor/ |
