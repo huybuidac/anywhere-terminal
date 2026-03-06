@@ -35,7 +35,10 @@
     "onCommand:anywhereTerminal.newTerminal",
     "onCommand:anywhereTerminal.focusSidebar",
     "onCommand:anywhereTerminal.focusPanel",
-    "onCommand:anywhereTerminal.moveToSecondary"
+    "onCommand:anywhereTerminal.moveToSecondary",
+    "onCommand:anywhereTerminal.splitHorizontal",
+    "onCommand:anywhereTerminal.splitVertical",
+    "onCommand:anywhereTerminal.closeSplitPane"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -101,6 +104,20 @@
       {
         "command": "anywhereTerminal.moveToSecondary",
         "title": "AnyWhere Terminal: Move to Secondary Sidebar"
+      },
+      {
+        "command": "anywhereTerminal.splitHorizontal",
+        "title": "AnyWhere Terminal: Split Horizontal",
+        "icon": "$(split-vertical)"
+      },
+      {
+        "command": "anywhereTerminal.splitVertical",
+        "title": "AnyWhere Terminal: Split Vertical",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "anywhereTerminal.closeSplitPane",
+        "title": "AnyWhere Terminal: Close Split Pane"
       }
     ],
     "menus": {
@@ -111,12 +128,36 @@
           "group": "navigation"
         },
         {
+          "command": "anywhereTerminal.splitVertical",
+          "when": "view == anywhereTerminal.sidebar || view == anywhereTerminal.panel",
+          "group": "navigation"
+        },
+        {
+          "command": "anywhereTerminal.splitHorizontal",
+          "when": "view == anywhereTerminal.sidebar || view == anywhereTerminal.panel",
+          "group": "navigation"
+        },
+        {
           "command": "anywhereTerminal.killTerminal",
           "when": "view == anywhereTerminal.sidebar || view == anywhereTerminal.panel",
           "group": "navigation"
         }
       ]
-    }
+    },
+    "keybindings": [
+      {
+        "command": "anywhereTerminal.splitVertical",
+        "key": "ctrl+\\",
+        "mac": "cmd+\\",
+        "when": "focusedView == anywhereTerminal.sidebar || focusedView == anywhereTerminal.panel"
+      },
+      {
+        "command": "anywhereTerminal.splitHorizontal",
+        "key": "ctrl+shift+\\",
+        "mac": "cmd+shift+\\",
+        "when": "focusedView == anywhereTerminal.sidebar || focusedView == anywhereTerminal.panel"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "pnpm run package",

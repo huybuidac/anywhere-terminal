@@ -61,6 +61,46 @@ export function getAllSessionIds(root: SplitNode): string[] {
 // ─── Tree Mutation Functions ────────────────────────────────────────
 
 /**
+ * Remove a leaf node (identified by targetSessionId) from the tree and collapse its parent branch.
+ * Returns a new tree (immutable), or null if the tree becomes empty (root leaf removed).
+ * If targetSessionId is not found, returns the original tree unchanged.
+ */
+export function removeLeaf(root: SplitNode, targetSessionId: string): SplitNode | null {
+  // Root is the target leaf — tree becomes empty
+  if (root.type === "leaf") {
+    return root.sessionId === targetSessionId ? null : root;
+  }
+
+  // Check if either child of this branch is the target leaf
+  const [first, second] = root.children;
+
+  if (first.type === "leaf" && first.sessionId === targetSessionId) {
+    // Target is the first child — collapse to sibling (second child)
+    return second;
+  }
+
+  if (second.type === "leaf" && second.sessionId === targetSessionId) {
+    // Target is the second child — collapse to sibling (first child)
+    return first;
+  }
+
+  // Recurse into children
+  const newFirst = first.type === "branch" ? removeLeaf(first, targetSessionId) : first;
+  const newSecond = second.type === "branch" ? removeLeaf(second, targetSessionId) : second;
+
+  // If neither child changed, target was not found — return original tree
+  if (newFirst === first && newSecond === second) {
+    return root;
+  }
+
+  // A child was modified — rebuild this branch with the updated child
+  return {
+    ...root,
+    children: [newFirst ?? first, newSecond ?? second] as [SplitNode, SplitNode],
+  };
+}
+
+/**
  * Replace a leaf node (identified by targetSessionId) with a new subtree.
  * Returns a new tree (immutable). If targetSessionId is not found, returns the original tree unchanged.
  */

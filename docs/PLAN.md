@@ -440,28 +440,28 @@ Allow users to **split terminal panes** horizontally and vertically within each 
 ### Tasks
 
 #### 5.1 Split Layout Data Model (~3h)
-- [ ] Design a tree-based layout model (binary split tree):
+- [x] Design a tree-based layout model (binary split tree):
   - `SplitNode`: either a `LeafNode` (contains terminal sessionId) or `BranchNode` (contains direction + two children)
   - `BranchNode`: `{ direction: 'horizontal' | 'vertical', children: [SplitNode, SplitNode], ratio: number }`
   - `LeafNode`: `{ sessionId: string }`
-- [ ] Store layout tree per view in webview state
-- [ ] Serialize/deserialize layout for state persistence
+- [x] Store layout tree per view in webview state
+- [x] Serialize/deserialize layout for state persistence
 
 #### 5.2 Split Container UI (~5h)
-- [ ] Create `SplitContainer` component that renders the split tree recursively
-- [ ] Each leaf renders a terminal (xterm.js instance) in its own container div
-- [ ] Branch nodes render two children separated by a resize handle (divider)
-- [ ] CSS: use flexbox or CSS grid for split layout
+- [x] Create `SplitContainer` component that renders the split tree recursively
+- [x] Each leaf renders a terminal (xterm.js instance) in its own container div
+- [x] Branch nodes render two children separated by a resize handle (divider)
+- [x] CSS: use flexbox or CSS grid for split layout
   - Horizontal split: children stacked top-to-bottom
   - Vertical split: children side-by-side left-to-right
-- [ ] Each terminal container must support `FitAddon` independently
+- [x] Each terminal container must support `FitAddon` independently
 
 #### 5.3 Resize Handles (Drag to Resize) (~4h)
-- [ ] Implement drag handles between split panes
-- [ ] On mousedown → track mousemove → update split ratio → on mouseup stop
-- [ ] Minimum pane size constraint (e.g., 80px) to prevent collapsing
-- [ ] Cursor changes on hover (col-resize / row-resize)
-- [ ] Re-fit all affected terminals after resize
+- [x] Implement drag handles between split panes
+- [x] On mousedown → track mousemove → update split ratio → on mouseup stop
+- [x] Minimum pane size constraint (e.g., 80px) to prevent collapsing
+- [x] Cursor changes on hover (col-resize / row-resize)
+- [x] Re-fit all affected terminals after resize
 
 #### 5.4 Split Actions & Commands (~3h)
 - [ ] Add commands:

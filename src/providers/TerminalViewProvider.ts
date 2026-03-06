@@ -174,6 +174,40 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           }
           break;
 
+        case "requestSplitSession": {
+          if (
+            typeof (message as { direction?: unknown }).direction === "string" &&
+            typeof (message as { sourcePaneId?: unknown }).sourcePaneId === "string"
+          ) {
+            const splitMsg = message as { direction: "horizontal" | "vertical"; sourcePaneId: string };
+            const viewId = this.getViewId();
+            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview);
+            const newSession = this.sessionManager.getSession(newSessionId);
+            if (newSession) {
+              this.safePostMessage(webviewView.webview, {
+                type: "splitPaneCreated",
+                sourcePaneId: splitMsg.sourcePaneId,
+                newSessionId,
+                newSessionName: newSession.name,
+                direction: splitMsg.direction,
+              });
+            }
+          }
+          break;
+        }
+
+        case "requestCloseSplitPane": {
+          if (typeof (message as { sessionId?: unknown }).sessionId === "string") {
+            const closeMsg = message as { sessionId: string };
+            this.sessionManager.destroySession(closeMsg.sessionId);
+            this.safePostMessage(webviewView.webview, {
+              type: "tabRemoved",
+              tabId: closeMsg.sessionId,
+            });
+          }
+          break;
+        }
+
         default:
           // Silently ignore unknown message types
           break;

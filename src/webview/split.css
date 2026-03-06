@@ -41,3 +41,9 @@
 .split-handle[data-direction="horizontal"] {
   cursor: row-resize;
 }
+
+/* Active pane indicator — only visible when tab has 2+ panes */
+.split-leaf.active-pane {
+  outline: 1px solid var(--vscode-focusBorder, #007acc);
+  outline-offset: -1px;
+}

@@ -11,6 +11,7 @@ import {
   findLeaf,
   getAllSessionIds,
   type LeafNode,
+  removeLeaf,
   replaceNode,
   type SplitNode,
   updateBranchRatio,
@@ -154,6 +155,44 @@ describe("JSON serialization round-trip", () => {
     const serialized = JSON.stringify(original);
     const deserialized = JSON.parse(serialized) as SplitNode;
     expect(deserialized).toEqual(original);
+  });
+});
+
+// ─── updateBranchRatio ──────────────────────────────────────────────
+
+// ─── removeLeaf ─────────────────────────────────────────────────────
+
+describe("removeLeaf", () => {
+  it("returns sibling when leaf removed from two-pane split", () => {
+    const root = createBranch("vertical", createLeaf("a"), createLeaf("b"));
+    const result = removeLeaf(root, "b");
+    expect(result).toEqual({ type: "leaf", sessionId: "a" });
+  });
+
+  it("collapses parent when leaf removed from nested split", () => {
+    const root = createBranch(
+      "vertical",
+      createLeaf("a"),
+      createBranch("horizontal", createLeaf("b"), createLeaf("c")),
+    );
+    const result = removeLeaf(root, "b");
+    expect(result).not.toBeNull();
+    const branch = result as BranchNode;
+    expect(branch.type).toBe("branch");
+    expect(branch.children[0]).toEqual({ type: "leaf", sessionId: "a" });
+    expect(branch.children[1]).toEqual({ type: "leaf", sessionId: "c" });
+  });
+
+  it("returns null when removing the only leaf (root)", () => {
+    const root = createLeaf("a");
+    const result = removeLeaf(root, "a");
+    expect(result).toBeNull();
+  });
+
+  it("returns original tree unchanged for non-existent leaf", () => {
+    const root = createBranch("vertical", createLeaf("a"), createLeaf("b"));
+    const result = removeLeaf(root, "z");
+    expect(result).toBe(root); // Same reference — unchanged
   });
 });
 

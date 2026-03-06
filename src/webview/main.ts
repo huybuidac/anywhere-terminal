@@ -19,7 +19,15 @@ import { Terminal } from "@xterm/xterm";
 import type { ExtensionToWebViewMessage, InitMessage, TerminalConfig } from "../types/messages";
 import { type ClipboardProvider, createKeyEventHandler } from "./InputHandler";
 import { renderSplitTree } from "./SplitContainer";
-import { createLeaf, getAllSessionIds, type SplitNode, updateBranchRatio } from "./SplitModel";
+import {
+  createBranch,
+  createLeaf,
+  getAllSessionIds,
+  removeLeaf,
+  replaceNode,
+  type SplitNode,
+  updateBranchRatio,
+} from "./SplitModel";
 import { attachResizeHandle } from "./SplitResizeHandle";
 import { handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
 
@@ -97,6 +105,9 @@ let themeObserver: MutationObserver | undefined;
 /** Split layout tree per tab — maps tab ID to its root SplitNode. */
 const tabLayouts = new Map<string, SplitNode>();
 
+/** Active pane ID per tab — tracks which pane is focused in a split layout. */
+const tabActivePaneIds = new Map<string, string>();
+
 /** Cleanup functions for resize handles — keyed by tab ID. */
 const resizeCleanups = new Map<string, (() => void)[]>();
 
@@ -113,8 +124,12 @@ function persistLayoutState(): void {
   for (const [tabId, layout] of tabLayouts) {
     layouts[tabId] = layout;
   }
+  const activePaneIds: Record<string, string> = {};
+  for (const [tabId, paneId] of tabActivePaneIds) {
+    activePaneIds[tabId] = paneId;
+  }
   const currentState = (vscode.getState() as Record<string, unknown>) ?? {};
-  vscode.setState({ ...currentState, tabLayouts: layouts });
+  vscode.setState({ ...currentState, tabLayouts: layouts, tabActivePaneIds: activePaneIds });
 }
 
 /** Restore layout state from vscode.getState(). Returns empty map if missing/malformed. */
@@ -127,6 +142,23 @@ function restoreLayoutState(): Map<string, SplitNode> {
       for (const [tabId, layout] of Object.entries(layouts)) {
         if (layout && typeof layout === "object" && "type" in layout) {
           restored.set(tabId, layout);
+        }
+      }
+    }
+    // Restore active pane IDs
+    if (state && typeof state.tabActivePaneIds === "object" && state.tabActivePaneIds !== null) {
+      const paneIds = state.tabActivePaneIds as Record<string, string>;
+      for (const [tabId, paneId] of Object.entries(paneIds)) {
+        if (typeof paneId === "string") {
+          // Validate that the pane still exists in the layout
+          const layout = restored.get(tabId);
+          if (layout) {
+            const allIds = getAllSessionIds(layout);
+            if (allIds.includes(paneId)) {
+              tabActivePaneIds.set(tabId, paneId);
+            }
+            // If pane no longer exists, fallback to first leaf (handled by getActivePaneId)
+          }
         }
       }
     }
@@ -185,6 +217,28 @@ function _renderTabSplitTree(tabId: string): void {
         instance.container.style.width = "100%";
         instance.container.style.height = "100%";
       }
+
+      // Click-to-focus: update activePaneId and focus terminal
+      leafContainer.addEventListener("mousedown", () => {
+        if (!activeTabId) {
+          return;
+        }
+        const currentActive = tabActivePaneIds.get(activeTabId);
+        if (currentActive === sessionId) {
+          return; // Already active
+        }
+        tabActivePaneIds.set(activeTabId, sessionId);
+        updateActivePaneVisual(activeTabId);
+        persistLayoutState();
+
+        const inst = terminals.get(sessionId);
+        if (inst) {
+          inst.terminal.focus();
+        }
+
+        // Update tab bar to reflect active pane name
+        updateTabBar();
+      });
     },
   });
 
@@ -214,6 +268,57 @@ function _renderTabSplitTree(tabId: string): void {
     });
 
     resizeCleanups.get(tabId)?.push(cleanup);
+  }
+
+  // Apply active pane visual indicator after rendering
+  updateActivePaneVisual(tabId);
+}
+
+/**
+ * Show the tab container for a given tab ID (make it visible in the DOM).
+ */
+function showTabContainer(tabId: string): void {
+  const containerEl = document.getElementById("terminal-container");
+  if (!containerEl) {
+    return;
+  }
+  const tabContainer = containerEl.querySelector(`[data-tab-id="${tabId}"]`) as HTMLDivElement | null;
+  if (tabContainer) {
+    tabContainer.style.display = "block";
+  }
+}
+
+/**
+ * Update the visual active pane indicator for a tab.
+ * Adds `.active-pane` class to the active leaf, removes from all others.
+ * Only applies when the tab has 2+ panes (no indicator for single-pane tabs).
+ */
+function updateActivePaneVisual(tabId: string): void {
+  const containerEl = document.getElementById("terminal-container");
+  if (!containerEl) {
+    return;
+  }
+  const tabContainer = containerEl.querySelector(`[data-tab-id="${tabId}"]`);
+  if (!tabContainer) {
+    return;
+  }
+
+  const layout = tabLayouts.get(tabId);
+  const hasSplits = layout && layout.type === "branch";
+  const activePaneId = tabActivePaneIds.get(tabId) ?? tabId;
+
+  // Remove active-pane from all leaves in this tab
+  const leaves = Array.from(tabContainer.querySelectorAll(".split-leaf"));
+  for (const leaf of leaves) {
+    leaf.classList.remove("active-pane");
+  }
+
+  // Only add indicator when there are 2+ panes
+  if (hasSplits) {
+    const activeLeaf = tabContainer.querySelector(`.split-leaf[data-session-id="${activePaneId}"]`);
+    if (activeLeaf) {
+      activeLeaf.classList.add("active-pane");
+    }
   }
 }
 
@@ -588,6 +693,7 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
   // Initialize split layout for this tab (single leaf)
   if (!tabLayouts.has(id)) {
     tabLayouts.set(id, createLeaf(id));
+    tabActivePaneIds.set(id, id);
     persistLayoutState();
   }
 
@@ -612,6 +718,7 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
 
 /**
  * Switch the active terminal tab (CSS display toggle).
+ * Handles both single-pane and split-pane tabs.
  * See: docs/design/xterm-integration.md#§7
  */
 function switchTab(newTabId: string): void {
@@ -621,17 +728,34 @@ function switchTab(newTabId: string): void {
     return;
   }
 
-  // Hide current
-  if (activeTabId && activeTabId !== newTabId) {
-    const current = terminals.get(activeTabId);
-    if (current) {
-      current.container.style.display = "none";
+  const containerEl = document.getElementById("terminal-container");
+
+  // Hide current tab's container
+  if (activeTabId && activeTabId !== newTabId && containerEl) {
+    const currentTabContainer = containerEl.querySelector(`[data-tab-id="${activeTabId}"]`) as HTMLDivElement | null;
+    if (currentTabContainer) {
+      currentTabContainer.style.display = "none";
+    } else {
+      // Fallback for non-split tabs
+      const current = terminals.get(activeTabId);
+      if (current) {
+        current.container.style.display = "none";
+      }
     }
   }
 
-  // Show new
-  next.container.style.display = "block";
+  // Show new tab's container
   activeTabId = newTabId;
+  if (containerEl) {
+    const newTabContainer = containerEl.querySelector(`[data-tab-id="${newTabId}"]`) as HTMLDivElement | null;
+    if (newTabContainer) {
+      newTabContainer.style.display = "block";
+    } else {
+      next.container.style.display = "block";
+    }
+  } else {
+    next.container.style.display = "block";
+  }
 
   // Fit after display change (container now has dimensions)
   requestAnimationFrame(() => {
@@ -639,9 +763,31 @@ function switchTab(newTabId: string): void {
     if (!terminals.has(newTabId)) {
       return;
     }
-    next.fitAddon.fit();
-    next.terminal.focus();
+    // Fit all leaves in the split tree
+    const layout = tabLayouts.get(newTabId);
+    if (layout) {
+      const sessionIds = getAllSessionIds(layout);
+      for (const sessionId of sessionIds) {
+        const instance = terminals.get(sessionId);
+        if (instance) {
+          instance.fitAddon.fit();
+        }
+      }
+    } else {
+      next.fitAddon.fit();
+    }
+    // Focus the active pane's terminal
+    const activePaneId = tabActivePaneIds.get(newTabId) ?? newTabId;
+    const activeInstance = terminals.get(activePaneId);
+    if (activeInstance) {
+      activeInstance.terminal.focus();
+    } else {
+      next.terminal.focus();
+    }
   });
+
+  // Update active pane visual
+  updateActivePaneVisual(newTabId);
 
   // Update tab bar active state
   updateTabBar();
@@ -651,7 +797,7 @@ function switchTab(newTabId: string): void {
 }
 
 /**
- * Remove and dispose a terminal instance.
+ * Remove and dispose a terminal instance (and all its split pane terminals).
  * See: docs/design/xterm-integration.md#§6 Disposal
  */
 function removeTerminal(id: string): void {
@@ -660,17 +806,39 @@ function removeTerminal(id: string): void {
     return;
   }
 
-  // 1. Dispose xterm.js (disposes loaded addons too)
+  // Get all session IDs in this tab's split tree (if any) before cleanup
+  const layout = tabLayouts.get(id);
+  const splitSessionIds = layout ? getAllSessionIds(layout).filter((sid) => sid !== id) : [];
+
+  // 1. Dispose the root terminal
   instance.terminal.dispose();
-
-  // 2. Remove DOM element
   instance.container.remove();
-
-  // 3. Remove from map
   terminals.delete(id);
 
-  // 3b. Clean up split layout for this tab
+  // 1b. Dispose all split pane terminals belonging to this tab
+  for (const splitId of splitSessionIds) {
+    const splitInstance = terminals.get(splitId);
+    if (splitInstance) {
+      splitInstance.terminal.dispose();
+      splitInstance.container.remove();
+      terminals.delete(splitId);
+    }
+    // Notify extension host to destroy the PTY session
+    vscode.postMessage({ type: "requestCloseSplitPane", sessionId: splitId });
+  }
+
+  // 2. Remove the tab container from DOM
+  const containerEl = document.getElementById("terminal-container");
+  if (containerEl) {
+    const tabContainer = containerEl.querySelector(`[data-tab-id="${id}"]`);
+    if (tabContainer) {
+      tabContainer.remove();
+    }
+  }
+
+  // 3. Clean up split layout and active pane tracking for this tab
   tabLayouts.delete(id);
+  tabActivePaneIds.delete(id);
   const cleanups = resizeCleanups.get(id);
   if (cleanups) {
     for (const cleanup of cleanups) {
@@ -680,11 +848,12 @@ function removeTerminal(id: string): void {
   }
   persistLayoutState();
 
-  // 4. If this was active tab, switch to next
+  // 4. If this was active tab, switch to next available tab
   if (activeTabId === id) {
-    const remaining = Array.from(terminals.keys());
-    if (remaining.length > 0) {
-      switchTab(remaining[remaining.length - 1]);
+    // Find remaining root tabs (those with tabLayouts entries)
+    const remainingTabs = Array.from(tabLayouts.keys());
+    if (remainingTabs.length > 0) {
+      switchTab(remainingTabs[remainingTabs.length - 1]);
     } else {
       activeTabId = null;
     }
@@ -697,6 +866,7 @@ function removeTerminal(id: string): void {
 /**
  * Update the tab bar UI to reflect current terminal state.
  * Delegates to the extracted renderTabBar utility for testability.
+ * For split tabs, shows the active pane's session name.
  */
 function updateTabBar(): void {
   const tabBarEl = document.getElementById("tab-bar");
@@ -704,9 +874,28 @@ function updateTabBar(): void {
     return;
   }
 
+  // Build a filtered terminals map: only include "root" tabs (those with a tabLayout entry)
+  // For split tabs, use the active pane's name
+  const tabTerminals = new Map<string, { name: string }>();
+  for (const [tabId, layout] of tabLayouts) {
+    if (layout.type === "branch") {
+      // Split tab — show active pane's name
+      const activePaneId = tabActivePaneIds.get(tabId) ?? tabId;
+      const activeInstance = terminals.get(activePaneId);
+      const rootInstance = terminals.get(tabId);
+      tabTerminals.set(tabId, { name: activeInstance?.name ?? rootInstance?.name ?? tabId });
+    } else {
+      // Single pane tab
+      const instance = terminals.get(tabId);
+      if (instance) {
+        tabTerminals.set(tabId, { name: instance.name });
+      }
+    }
+  }
+
   renderTabBar({
     tabBarEl,
-    terminals,
+    terminals: tabTerminals,
     activeTabId,
     onTabClick: (tabId: string) => {
       switchTab(tabId);
@@ -820,6 +1009,126 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
     case "viewShow":
       onViewShow();
       break;
+
+    case "splitPane": {
+      // Extension host requests a split — forward to extension to create a new session
+      if (!activeTabId) {
+        break;
+      }
+      const activePaneId = tabActivePaneIds.get(activeTabId) ?? activeTabId;
+      vscode.postMessage({
+        type: "requestSplitSession",
+        direction: msg.direction,
+        sourcePaneId: activePaneId,
+      });
+      break;
+    }
+
+    case "splitPaneCreated": {
+      // Extension host created a new session for a split pane
+      if (!activeTabId) {
+        break;
+      }
+      const layout = tabLayouts.get(activeTabId);
+      if (!layout) {
+        break;
+      }
+
+      // Create a new terminal for the split pane (not active tab-level, just a terminal instance)
+      const newInstance = createTerminal(msg.newSessionId, msg.newSessionName, currentConfig, false);
+      // Don't create a new tab layout for this terminal — it's part of the existing tab's split tree
+      tabLayouts.delete(msg.newSessionId);
+      tabActivePaneIds.delete(msg.newSessionId);
+
+      // Update the split tree: replace the source leaf with a branch containing source + new
+      const newBranch = createBranch(msg.direction, createLeaf(msg.sourcePaneId), createLeaf(msg.newSessionId));
+      const updatedLayout = replaceNode(layout, msg.sourcePaneId, newBranch);
+      tabLayouts.set(activeTabId, updatedLayout);
+
+      // Set the new pane as active
+      tabActivePaneIds.set(activeTabId, msg.newSessionId);
+
+      // Re-render the split tree
+      _renderTabSplitTree(activeTabId);
+      showTabContainer(activeTabId);
+      persistLayoutState();
+
+      // Fit all terminals after layout change
+      requestAnimationFrame(() => {
+        debouncedFitAllLeaves(activeTabId!);
+        // Focus the new terminal
+        newInstance.terminal.focus();
+      });
+
+      // Update tab bar to reflect active pane name
+      updateTabBar();
+      break;
+    }
+
+    case "closeSplitPane": {
+      // Close the active pane in the current tab's split layout
+      if (!activeTabId) {
+        break;
+      }
+      const layout = tabLayouts.get(activeTabId);
+      if (!layout) {
+        break;
+      }
+
+      const activePaneId = tabActivePaneIds.get(activeTabId) ?? activeTabId;
+
+      // If the layout is a single leaf, fall back to tab close
+      if (layout.type === "leaf") {
+        vscode.postMessage({ type: "closeTab", tabId: activeTabId });
+        break;
+      }
+
+      // Remove the active pane from the split tree
+      const updatedLayout = removeLeaf(layout, activePaneId);
+
+      if (updatedLayout === null) {
+        // Tree is empty — close the tab
+        vscode.postMessage({ type: "closeTab", tabId: activeTabId });
+        break;
+      }
+
+      // Find the sibling to focus (first leaf in the remaining tree)
+      const remainingIds = getAllSessionIds(updatedLayout);
+      const newActivePaneId = remainingIds[0] ?? activeTabId;
+
+      // Update state
+      tabLayouts.set(activeTabId, updatedLayout);
+      tabActivePaneIds.set(activeTabId, newActivePaneId);
+
+      // Destroy the terminal instance for the closed pane
+      const closedInstance = terminals.get(activePaneId);
+      if (closedInstance) {
+        closedInstance.terminal.dispose();
+        closedInstance.container.remove();
+        terminals.delete(activePaneId);
+      }
+
+      // Request the extension host to destroy the session
+      vscode.postMessage({ type: "requestCloseSplitPane", sessionId: activePaneId });
+
+      // Re-render the split tree
+      _renderTabSplitTree(activeTabId);
+      showTabContainer(activeTabId);
+      persistLayoutState();
+
+      // Fit and focus
+      requestAnimationFrame(() => {
+        debouncedFitAllLeaves(activeTabId!);
+        const siblingInstance = terminals.get(newActivePaneId);
+        if (siblingInstance) {
+          siblingInstance.terminal.focus();
+        }
+      });
+
+      // Update tab bar
+      updateTabBar();
+      break;
+    }
 
     case "error":
       console.error(`[AnyWhere Terminal] ${msg.severity}: ${msg.message}`);

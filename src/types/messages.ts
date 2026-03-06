@@ -60,6 +60,22 @@ export interface CloseTabMessage {
   tabId: string;
 }
 
+/** User requested a new PTY session for a split pane. */
+export interface RequestSplitSessionMessage {
+  type: "requestSplitSession";
+  /** Direction of the split */
+  direction: "horizontal" | "vertical";
+  /** Session ID of the pane being split */
+  sourcePaneId: string;
+}
+
+/** User requested destruction of a split pane's session. */
+export interface RequestCloseSplitPaneMessage {
+  type: "requestCloseSplitPane";
+  /** Session ID of the pane to close */
+  sessionId: string;
+}
+
 /** User requested terminal clear (scrollback + viewport). */
 export interface ClearMessage {
   type: "clear";
@@ -86,7 +102,9 @@ export type WebViewToExtensionMessage =
   | SwitchTabMessage
   | CloseTabMessage
   | ClearMessage
-  | AckMessage;
+  | AckMessage
+  | RequestSplitSessionMessage
+  | RequestCloseSplitPaneMessage;
 
 // ─── Extension → WebView Messages ───────────────────────────────────
 
@@ -176,6 +194,31 @@ export interface ViewShowMessage {
   type: "viewShow";
 }
 
+/** Trigger a split action in the webview. */
+export interface SplitPaneMessage {
+  type: "splitPane";
+  /** Direction of the split */
+  direction: "horizontal" | "vertical";
+}
+
+/** Confirms a new split session was created by the extension host. */
+export interface SplitPaneCreatedMessage {
+  type: "splitPaneCreated";
+  /** Session ID of the pane that was split */
+  sourcePaneId: string;
+  /** New session ID for the split pane */
+  newSessionId: string;
+  /** Display name for the new session */
+  newSessionName: string;
+  /** Direction of the split */
+  direction: "horizontal" | "vertical";
+}
+
+/** Close the active split pane in the webview. */
+export interface CloseSplitPaneMessage {
+  type: "closeSplitPane";
+}
+
 /**
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
@@ -189,4 +232,7 @@ export type ExtensionToWebViewMessage =
   | RestoreMessage
   | ConfigUpdateMessage
   | ErrorMessage
-  | ViewShowMessage;
+  | ViewShowMessage
+  | SplitPaneMessage
+  | SplitPaneCreatedMessage
+  | CloseSplitPaneMessage;

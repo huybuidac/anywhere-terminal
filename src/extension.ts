@@ -143,6 +143,70 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
+  // ─── Split Commands ──────────────────────────────────────────────
+
+  // splitHorizontal: split the active pane horizontally (top/bottom)
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.splitHorizontal", () => {
+      const provider = getFocusedProvider();
+      const view = provider.view;
+      if (!view) {
+        return;
+      }
+      try {
+        void (
+          view.webview.postMessage({
+            type: "splitPane",
+            direction: "horizontal",
+          }) as Thenable<boolean>
+        ).then(undefined, () => {});
+      } catch {
+        // Webview may be disposed
+      }
+    }),
+  );
+
+  // splitVertical: split the active pane vertically (left/right)
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.splitVertical", () => {
+      const provider = getFocusedProvider();
+      const view = provider.view;
+      if (!view) {
+        return;
+      }
+      try {
+        void (
+          view.webview.postMessage({
+            type: "splitPane",
+            direction: "vertical",
+          }) as Thenable<boolean>
+        ).then(undefined, () => {});
+      } catch {
+        // Webview may be disposed
+      }
+    }),
+  );
+
+  // closeSplitPane: close the active pane within a split layout
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.closeSplitPane", () => {
+      const provider = getFocusedProvider();
+      const view = provider.view;
+      if (!view) {
+        return;
+      }
+      try {
+        void (
+          view.webview.postMessage({
+            type: "closeSplitPane",
+          }) as Thenable<boolean>
+        ).then(undefined, () => {});
+      } catch {
+        // Webview may be disposed
+      }
+    }),
+  );
+
   // Register SessionManager for disposal on extension deactivation
   context.subscriptions.push(sessionManager);
 }
