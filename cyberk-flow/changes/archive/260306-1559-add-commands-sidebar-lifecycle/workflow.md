@@ -36,10 +36,10 @@
 
 ## Archive
 
-- [ ] Post-merge sanity check
-- [ ] Extract knowledge + retrospective
-- [ ] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
-- [ ] Archive change: `cf_archive` <!-- auto-ticked by script -->
+- [x] Post-merge sanity check
+- [x] Extract knowledge + retrospective
+- [x] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
+- [x] Archive change: `cf_archive` <!-- auto-ticked by script -->
 
 ## Notes
 
@@ -52,6 +52,11 @@ Fastlane: auto-approved specs — all specs align with existing design docs and 
 Fastlane: skipped architecture review design doc — LOW risk, no new dependencies, patterns follow existing codebase conventions. All capabilities extend existing SessionManager/TerminalViewProvider patterns.
 
 Fastlane: auto-approved plan — 10 tasks across 3 tracks, appetite M (<=3d).
+
+**Retrospective:**
+- **Estimate vs Actual**: Appetite was M (<=3d), took ~1 day
+- **What worked**: Fastlane mode enabled rapid progression through all stages; existing design patterns provided clear implementation path; comprehensive test coverage caught issues early
+- **What to improve**: Could have batched some smaller tasks for efficiency; secondary sidebar implementation was simpler than anticipated
 
 ## Revision Log
 
@@ -73,4 +78,5 @@ Fastlane: auto-approved plan — 10 tasks across 3 tracks, appetite M (<=3d).
 | 2026-03-06 | Implement | Task 3_1: Registered moveToSecondary command | Focuses sidebar then opens Move View dialog |
 | 2026-03-06 | Implement | Task 2_4: Wired visibility pause/resume + PTY-anchored dispose | 4 new tests pass |
 | 2026-03-06 | Implement | Task 4_1: Verify gate passed | check-types, lint, test:unit all pass (225 tests) |
-| 2026-03-06 | Implement | Oracle + Code Review passed | No must-fix issues found |
+| 2026-03-06 | Archive | Committed changes | feat: add-commands-sidebar-lifecycle — Commands, secondary sidebar, and view lifecycle resilience (c7a932a) |
+| 2026-03-06 | Archive | Post-commit sanity check passed | 18 files changed as expected, verify gates already passed |

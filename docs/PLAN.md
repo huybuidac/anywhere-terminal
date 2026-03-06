@@ -221,33 +221,33 @@ Terminal works in **all locations** (Sidebar, Panel, Editor) with **multiple tab
 - [x] Input routing: include `tabId` in input/resize messages
 
 #### 2.5 Secondary Sidebar Support (~2h)
-- [ ] Check if `contribSecondarySideBar` API is finalized in target VS Code version
+- [x] Check if `contribSecondarySideBar` API is finalized in target VS Code version
   - If yes: add `viewsContainers.secondarySidebar` entry
   - If no: document "Move View" instructions for users
-- [ ] Register command `anywhereTerminal.moveToSecondary`:
+- [x] Register command `anywhereTerminal.moveToSecondary`:
   - Focus the sidebar view
   - Execute `workbench.action.moveView`
 
 #### 2.6 Commands Registration (~2h)
-- [ ] Register all commands in `package.json`:
+- [x] Register all commands in `package.json`:
   - `anywhereTerminal.newTerminal` - create new tab in active view
   - `anywhereTerminal.newTerminalInEditor` - open editor terminal
   - `anywhereTerminal.killTerminal` - kill active tab
   - `anywhereTerminal.clearTerminal` - clear active terminal
   - `anywhereTerminal.focusSidebar` - focus sidebar terminal
   - `anywhereTerminal.focusPanel` - focus panel terminal
-- [ ] Add view/title menu buttons (icons in view toolbar):
+- [x] Add view/title menu buttons (icons in view toolbar):
   - New terminal (+ icon)
   - Kill terminal (trash icon)
 
 #### 2.7 View Lifecycle Resilience (~3h)
-- [ ] PTY processes anchored to Extension Host lifecycle (not WebView)
-- [ ] Implement scrollback cache in SessionManager:
+- [x] PTY processes anchored to Extension Host lifecycle (not WebView)
+- [x] Implement scrollback cache in SessionManager:
   - Buffer PTY output per session (configurable max size)
   - On webview `ready` message → flush cached output to webview
-- [ ] Handle WebView visibility changes:
+- [x] Handle WebView visibility changes:
   - `onDidChangeVisibility` → pause/resume output flushing
-- [ ] Handle WebView disposal → session cleanup
+- [x] Handle WebView disposal → session cleanup
 
 #### 2.8 Testing (~3h)
 - [ ] Test simultaneous terminals in Sidebar + Panel
