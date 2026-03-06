@@ -18,6 +18,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import type { ExtensionToWebViewMessage, InitMessage, TerminalConfig } from "../types/messages";
 import { type ClipboardProvider, createKeyEventHandler } from "./InputHandler";
+import { handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -463,6 +464,12 @@ function switchTab(newTabId: string): void {
     next.fitAddon.fit();
     next.terminal.focus();
   });
+
+  // Update tab bar active state
+  updateTabBar();
+
+  // Notify extension
+  vscode.postMessage({ type: "switchTab", tabId: newTabId });
 }
 
 /**
@@ -493,6 +500,35 @@ function removeTerminal(id: string): void {
       activeTabId = null;
     }
   }
+
+  // 5. Update tab bar
+  updateTabBar();
+}
+
+/**
+ * Update the tab bar UI to reflect current terminal state.
+ * Delegates to the extracted renderTabBar utility for testability.
+ */
+function updateTabBar(): void {
+  const tabBarEl = document.getElementById("tab-bar");
+  if (!tabBarEl) {
+    return;
+  }
+
+  renderTabBar({
+    tabBarEl,
+    terminals,
+    activeTabId,
+    onTabClick: (tabId: string) => {
+      switchTab(tabId);
+    },
+    onTabClose: (tabId: string) => {
+      vscode.postMessage({ type: "closeTab", tabId });
+    },
+    onAddClick: () => {
+      vscode.postMessage({ type: "createTab" });
+    },
+  });
 }
 
 /**
@@ -571,11 +607,13 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
       // Create new terminal (inactive initially) and switch to it
       createTerminal(msg.tabId, msg.name, currentConfig, false);
       switchTab(msg.tabId);
+      // Note: switchTab already calls updateTabBar()
       break;
     }
 
     case "tabRemoved":
       removeTerminal(msg.tabId);
+      // Note: removeTerminal already calls updateTabBar()
       break;
 
     case "restore": {
@@ -622,6 +660,9 @@ function handleInit(msg: InitMessage): void {
   if (containerEl) {
     setupResizeObserver(containerEl);
   }
+
+  // Render tab bar after all tabs are created
+  updateTabBar();
 }
 
 // ─── Bootstrap ──────────────────────────────────────────────────────
@@ -644,6 +685,19 @@ function bootstrap(): void {
   });
   document.addEventListener("compositionend", () => {
     isComposing = false;
+  });
+
+  // Set up Ctrl+Tab / Ctrl+Shift+Tab keyboard shortcuts for tab cycling
+  // See: docs/design/flow-multi-tab.md#Keyboard-Shortcut
+  document.addEventListener("keydown", (e: KeyboardEvent) => {
+    const handled = handleTabKeyboardShortcut(e, {
+      terminals,
+      activeTabId,
+      switchTab,
+    });
+    if (handled) {
+      e.preventDefault();
+    }
   });
 
   // Set up message listener for Extension -> WebView messages

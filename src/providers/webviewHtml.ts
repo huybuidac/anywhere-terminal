@@ -51,6 +51,77 @@ export function getTerminalHtml(
     }
     #tab-bar {
       flex-shrink: 0;
+      display: none;
+      height: 30px;
+      background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
+      align-items: center;
+      overflow: hidden;
+      user-select: none;
+      font-size: 12px;
+      font-family: var(--vscode-font-family, sans-serif);
+    }
+    #tab-bar.visible {
+      display: flex;
+    }
+    .tab-item {
+      display: flex;
+      align-items: center;
+      height: 100%;
+      padding: 0 8px;
+      cursor: pointer;
+      white-space: nowrap;
+      color: var(--vscode-tab-inactiveForeground, #999);
+      background: var(--vscode-tab-inactiveBackground, transparent);
+      border-right: 1px solid var(--vscode-tab-border, transparent);
+      gap: 6px;
+    }
+    .tab-item:hover {
+      background: var(--vscode-tab-hoverBackground, rgba(255,255,255,0.05));
+    }
+    .tab-item.active {
+      color: var(--vscode-tab-activeForeground, #fff);
+      background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+      border-bottom: 1px solid var(--vscode-focusBorder, #007acc);
+    }
+    .tab-close {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      border: none;
+      background: transparent;
+      color: inherit;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 0;
+      opacity: 0;
+    }
+    .tab-item:hover .tab-close,
+    .tab-item.active .tab-close {
+      opacity: 0.7;
+    }
+    .tab-close:hover {
+      opacity: 1 !important;
+      background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+    }
+    .tab-add {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 100%;
+      cursor: pointer;
+      color: var(--vscode-tab-inactiveForeground, #999);
+      background: transparent;
+      border: none;
+      font-size: 16px;
+      padding: 0;
+    }
+    .tab-add:hover {
+      background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+      color: var(--vscode-tab-activeForeground, #fff);
     }
     #terminal-container {
       flex: 1;
