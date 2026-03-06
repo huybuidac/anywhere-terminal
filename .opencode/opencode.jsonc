@@ -23,19 +23,38 @@
     "question": "allow"
   },
   "agent": {
+    "cf-master": {
+      "permission": {
+        "edit": "allow",
+        "task": "allow",
+        "question": "allow"
+      }
+    },
+    "cf-librarian": {
+      "permission": {
+        "edit": "allow",
+        "task": "allow"
+      }
+    },
     "cf-build": {
       "permission": {
-        "task": "allow"
+        "edit": "allow",
+        "task": "allow",
+        "question": "allow"
       }
     },
     "cf-plan": {
       "permission": {
-        "task": "allow"
+        "edit": "allow",
+        "task": "allow",
+        "question": "allow"
       }
     },
     "cf-archive": {
       "permission": {
-        "task": "allow"
+        "edit": "allow",
+        "task": "allow",
+        "question": "allow"
       }
     }
   }

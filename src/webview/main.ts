@@ -18,6 +18,9 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import type { ExtensionToWebViewMessage, InitMessage, TerminalConfig } from "../types/messages";
 import { type ClipboardProvider, createKeyEventHandler } from "./InputHandler";
+import { renderSplitTree } from "./SplitContainer";
+import { createLeaf, getAllSessionIds, type SplitNode, updateBranchRatio } from "./SplitModel";
+import { attachResizeHandle } from "./SplitResizeHandle";
 import { handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
 
 // ─── Types ──────────────────────────────────────────────────────────
@@ -91,9 +94,147 @@ let resizeObserver: ResizeObserver | undefined;
 /** MutationObserver for theme change detection. */
 let themeObserver: MutationObserver | undefined;
 
+/** Split layout tree per tab — maps tab ID to its root SplitNode. */
+const tabLayouts = new Map<string, SplitNode>();
+
+/** Cleanup functions for resize handles — keyed by tab ID. */
+const resizeCleanups = new Map<string, (() => void)[]>();
+
 /** Choose location by container aspect ratio when views are moved. */
 function inferLocationFromSize(width: number, height: number): TerminalLocation {
   return width > height * 1.2 ? "panel" : "sidebar";
+}
+
+// ─── Split Layout State Persistence ─────────────────────────────────
+
+/** Persist layout state to vscode.setState(). */
+function persistLayoutState(): void {
+  const layouts: Record<string, SplitNode> = {};
+  for (const [tabId, layout] of tabLayouts) {
+    layouts[tabId] = layout;
+  }
+  const currentState = (vscode.getState() as Record<string, unknown>) ?? {};
+  vscode.setState({ ...currentState, tabLayouts: layouts });
+}
+
+/** Restore layout state from vscode.getState(). Returns empty map if missing/malformed. */
+function restoreLayoutState(): Map<string, SplitNode> {
+  const restored = new Map<string, SplitNode>();
+  try {
+    const state = vscode.getState() as Record<string, unknown> | null;
+    if (state && typeof state.tabLayouts === "object" && state.tabLayouts !== null) {
+      const layouts = state.tabLayouts as Record<string, SplitNode>;
+      for (const [tabId, layout] of Object.entries(layouts)) {
+        if (layout && typeof layout === "object" && "type" in layout) {
+          restored.set(tabId, layout);
+        }
+      }
+    }
+  } catch {
+    // Fallback: return empty map
+  }
+  return restored;
+}
+
+/**
+ * Render the split tree for a tab and attach terminals to leaf containers.
+ * Also attaches resize handles to branch nodes.
+ */
+function _renderTabSplitTree(tabId: string): void {
+  const layout = tabLayouts.get(tabId);
+  if (!layout) {
+    return;
+  }
+
+  const containerEl = document.getElementById("terminal-container");
+  if (!containerEl) {
+    return;
+  }
+
+  // Find or create the tab's root container
+  let tabContainer = containerEl.querySelector(`[data-tab-id="${tabId}"]`) as HTMLDivElement | null;
+  if (!tabContainer) {
+    tabContainer = document.createElement("div");
+    tabContainer.dataset.tabId = tabId;
+    tabContainer.style.width = "100%";
+    tabContainer.style.height = "100%";
+    tabContainer.style.display = "none";
+    containerEl.appendChild(tabContainer);
+  }
+
+  // Clean up existing resize handles for this tab
+  const cleanups = resizeCleanups.get(tabId);
+  if (cleanups) {
+    for (const cleanup of cleanups) {
+      cleanup();
+    }
+  }
+  resizeCleanups.set(tabId, []);
+
+  // Clear existing content
+  tabContainer.innerHTML = "";
+
+  // Render the split tree
+  renderSplitTree(layout, tabContainer, {
+    onLeafMounted: (sessionId: string, leafContainer: HTMLDivElement) => {
+      const instance = terminals.get(sessionId);
+      if (instance) {
+        // Move the terminal's container div into the leaf
+        leafContainer.appendChild(instance.container);
+        instance.container.style.display = "block";
+        instance.container.style.width = "100%";
+        instance.container.style.height = "100%";
+      }
+    },
+  });
+
+  // Attach resize handles to all branch nodes
+  // Each handle has data-branch-index stamped by renderSplitTree (pre-order index)
+  const handles = Array.from(tabContainer.querySelectorAll(".split-handle"));
+  for (const handle of handles) {
+    const handleEl = handle as HTMLDivElement;
+    const branchEl = handleEl.parentElement as HTMLDivElement;
+    const direction = handleEl.dataset.direction as "horizontal" | "vertical";
+    const branchIndex = Number.parseInt(handleEl.dataset.branchIndex ?? "0", 10);
+
+    const cleanup = attachResizeHandle(handleEl, branchEl, direction, {
+      onRatioChange: (newRatio: number) => {
+        // Update the layout tree model with the new ratio
+        const currentLayout = tabLayouts.get(tabId);
+        if (currentLayout) {
+          const updatedLayout = updateBranchRatio(currentLayout, branchIndex, newRatio);
+          tabLayouts.set(tabId, updatedLayout);
+        }
+        persistLayoutState();
+      },
+      onResizeComplete: () => {
+        // Fit all leaf terminals in this tab
+        debouncedFitAllLeaves(tabId);
+      },
+    });
+
+    resizeCleanups.get(tabId)?.push(cleanup);
+  }
+}
+
+/**
+ * Debounced fit for all leaf terminals in a tab.
+ */
+function debouncedFitAllLeaves(tabId: string): void {
+  clearTimeout(resizeTimeout);
+  resizeTimeout = window.setTimeout(() => {
+    const layout = tabLayouts.get(tabId);
+    if (!layout) {
+      return;
+    }
+    const sessionIds = getAllSessionIds(layout);
+    for (const sessionId of sessionIds) {
+      const instance = terminals.get(sessionId);
+      if (instance) {
+        instance.fitAddon.fit();
+      }
+    }
+  }, RESIZE_DEBOUNCE_MS);
 }
 
 /** Apply background color for the inferred location to the webview body. */
@@ -267,13 +408,30 @@ function ackChars(count: number): void {
 
 /**
  * Debounced fit: resets timer on each call, fits after RESIZE_DEBOUNCE_MS quiet period.
+ * Fits all leaf terminals in the active tab's split tree.
  */
 function debouncedFit(): void {
   clearTimeout(resizeTimeout);
   resizeTimeout = window.setTimeout(() => {
-    const instance = activeTabId ? terminals.get(activeTabId) : undefined;
-    if (instance) {
-      instance.fitAddon.fit();
+    if (!activeTabId) {
+      return;
+    }
+    const layout = tabLayouts.get(activeTabId);
+    if (layout) {
+      // Fit all leaves in the split tree
+      const sessionIds = getAllSessionIds(layout);
+      for (const sessionId of sessionIds) {
+        const instance = terminals.get(sessionId);
+        if (instance) {
+          instance.fitAddon.fit();
+        }
+      }
+    } else {
+      // Fallback: fit single terminal
+      const instance = terminals.get(activeTabId);
+      if (instance) {
+        instance.fitAddon.fit();
+      }
     }
   }, RESIZE_DEBOUNCE_MS);
 }
@@ -314,9 +472,23 @@ function onViewShow(): void {
   if (pendingResize) {
     pendingResize = false;
     requestAnimationFrame(() => {
-      const instance = activeTabId ? terminals.get(activeTabId) : undefined;
-      if (instance) {
-        instance.fitAddon.fit();
+      if (!activeTabId) {
+        return;
+      }
+      const layout = tabLayouts.get(activeTabId);
+      if (layout) {
+        const sessionIds = getAllSessionIds(layout);
+        for (const sessionId of sessionIds) {
+          const instance = terminals.get(sessionId);
+          if (instance) {
+            instance.fitAddon.fit();
+          }
+        }
+      } else {
+        const instance = terminals.get(activeTabId);
+        if (instance) {
+          instance.fitAddon.fit();
+        }
       }
     });
   }
@@ -413,6 +585,12 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
 
   terminals.set(id, instance);
 
+  // Initialize split layout for this tab (single leaf)
+  if (!tabLayouts.has(id)) {
+    tabLayouts.set(id, createLeaf(id));
+    persistLayoutState();
+  }
+
   if (isActive) {
     activeTabId = id;
   }
@@ -490,6 +668,17 @@ function removeTerminal(id: string): void {
 
   // 3. Remove from map
   terminals.delete(id);
+
+  // 3b. Clean up split layout for this tab
+  tabLayouts.delete(id);
+  const cleanups = resizeCleanups.get(id);
+  if (cleanups) {
+    for (const cleanup of cleanups) {
+      cleanup();
+    }
+    resizeCleanups.delete(id);
+  }
+  persistLayoutState();
 
   // 4. If this was active tab, switch to next
   if (activeTabId === id) {
@@ -649,6 +838,12 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
 function handleInit(msg: InitMessage): void {
   // Store config for future tab creation
   currentConfig = { ...msg.config };
+
+  // Restore layout state from previous session (if available)
+  const restoredLayouts = restoreLayoutState();
+  for (const [tabId, layout] of restoredLayouts) {
+    tabLayouts.set(tabId, layout);
+  }
 
   // Create terminal instances for each tab
   for (const tab of msg.tabs) {

@@ -432,6 +432,79 @@ Package, test, and publish a production-quality extension to the VS Code Marketp
 
 ---
 
+## Phase 5 - Split View (Terminal Pane Splitting)
+
+### Goal
+Allow users to **split terminal panes** horizontally and vertically within each view (sidebar, panel, editor). Each split pane contains its own terminal session. Panes can be recursively split and resized via drag handles, similar to VS Code's editor split functionality.
+
+### Tasks
+
+#### 5.1 Split Layout Data Model (~3h)
+- [ ] Design a tree-based layout model (binary split tree):
+  - `SplitNode`: either a `LeafNode` (contains terminal sessionId) or `BranchNode` (contains direction + two children)
+  - `BranchNode`: `{ direction: 'horizontal' | 'vertical', children: [SplitNode, SplitNode], ratio: number }`
+  - `LeafNode`: `{ sessionId: string }`
+- [ ] Store layout tree per view in webview state
+- [ ] Serialize/deserialize layout for state persistence
+
+#### 5.2 Split Container UI (~5h)
+- [ ] Create `SplitContainer` component that renders the split tree recursively
+- [ ] Each leaf renders a terminal (xterm.js instance) in its own container div
+- [ ] Branch nodes render two children separated by a resize handle (divider)
+- [ ] CSS: use flexbox or CSS grid for split layout
+  - Horizontal split: children stacked top-to-bottom
+  - Vertical split: children side-by-side left-to-right
+- [ ] Each terminal container must support `FitAddon` independently
+
+#### 5.3 Resize Handles (Drag to Resize) (~4h)
+- [ ] Implement drag handles between split panes
+- [ ] On mousedown → track mousemove → update split ratio → on mouseup stop
+- [ ] Minimum pane size constraint (e.g., 80px) to prevent collapsing
+- [ ] Cursor changes on hover (col-resize / row-resize)
+- [ ] Re-fit all affected terminals after resize
+
+#### 5.4 Split Actions & Commands (~3h)
+- [ ] Add commands:
+  - `anywhereTerminal.splitHorizontal` — split active terminal horizontally
+  - `anywhereTerminal.splitVertical` — split active terminal vertically
+  - `anywhereTerminal.closeSplitPane` — close active pane (unsplit)
+- [ ] Add split buttons to tab bar or terminal toolbar (split-horizontal icon, split-vertical icon)
+- [ ] Context menu entries for split actions
+- [ ] Keyboard shortcuts (e.g., Cmd+\ for vertical split, Cmd+Shift+\ for horizontal)
+
+#### 5.5 Focus Management (~2h)
+- [ ] Track which pane is "active" (focused)
+- [ ] Visual indicator for active pane (border highlight or subtle background change)
+- [ ] Click on a pane to focus it
+- [ ] Active pane receives keyboard input
+- [ ] Tab bar reflects the active pane's session
+
+#### 5.6 Message Protocol Updates (~2h)
+- [ ] Update resize messages to include sessionId (each pane resizes independently)
+- [ ] Route input to the focused pane's session
+- [ ] Handle output routing to correct pane container
+- [ ] New messages:
+  - `{ type: 'splitTerminal', direction: 'horizontal' | 'vertical', sessionId: string }`
+  - `{ type: 'closeSplitPane', sessionId: string }`
+
+#### 5.7 Integration & Edge Cases (~3h)
+- [ ] When a pane is closed, restructure the tree (promote sibling to parent's position)
+- [ ] When the last pane is closed, handle gracefully (create new default terminal or close view)
+- [ ] Resize all terminals when the overall view resizes (sidebar width change, etc.)
+- [ ] Persist split layout across webview hide/show cycles
+- [ ] Test recursive splitting: split → split again → split again → close inner panes
+
+### Phase 5 Acceptance Criteria
+- [ ] Can split any terminal pane horizontally or vertically
+- [ ] Can recursively split (split a split)
+- [ ] Drag handles resize panes smoothly
+- [ ] Each pane has its own independent terminal session
+- [ ] Focus management works correctly
+- [ ] Closing a pane restructures layout properly
+- [ ] Layout survives view hide/show cycles
+
+---
+
 ## Risk Register
 
 | Risk | Impact | Probability | Mitigation |
