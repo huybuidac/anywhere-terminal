@@ -130,6 +130,49 @@ export function getTerminalHtml(
       box-sizing: border-box;
     }
 
+    /* Split handle — visible 1px separator at rest, full sash on hover */
+    .split-handle {
+      flex: 0 0 4px;
+      position: relative;
+      background: transparent;
+      opacity: 1;
+      transition: background 0.15s ease;
+    }
+    .split-handle::after {
+      content: '';
+      position: absolute;
+    }
+    .split-handle[data-direction="vertical"]::after {
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 1px;
+      transform: translateX(-50%);
+      background: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    }
+    .split-handle[data-direction="horizontal"]::after {
+      left: 0;
+      right: 0;
+      top: 50%;
+      height: 1px;
+      transform: translateY(-50%);
+      background: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    }
+    .split-handle:hover,
+    .split-handle:active {
+      background: var(--vscode-sash-hoverBorder, rgba(128, 128, 128, 0.35));
+    }
+    .split-handle:hover::after,
+    .split-handle:active::after {
+      background: transparent;
+    }
+    .split-handle[data-direction="vertical"] {
+      cursor: col-resize;
+    }
+    .split-handle[data-direction="horizontal"] {
+      cursor: row-resize;
+    }
+
     /* Keep xterm's 1px overview-ruler/scrollbar lane invisible.
        We still keep overviewRuler.width=1 in JS for FitAddon sizing math. */
     .xterm .xterm-decoration-overview-ruler {

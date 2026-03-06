@@ -200,10 +200,6 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           if (typeof (message as { sessionId?: unknown }).sessionId === "string") {
             const closeMsg = message as { sessionId: string };
             this.sessionManager.destroySession(closeMsg.sessionId);
-            this.safePostMessage(webviewView.webview, {
-              type: "tabRemoved",
-              tabId: closeMsg.sessionId,
-            });
           }
           break;
         }

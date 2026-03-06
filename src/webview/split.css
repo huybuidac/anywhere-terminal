@@ -20,17 +20,46 @@
   min-height: 0;
 }
 
-/* Resize handle between split panes */
+/* Resize handle between split panes — visible 1px separator at rest */
 .split-handle {
   flex: 0 0 4px;
-  background: var(--vscode-sash-hoverBorder, rgba(128, 128, 128, 0.35));
-  opacity: 0;
-  transition: opacity 0.15s ease;
+  position: relative;
+  background: transparent;
+  opacity: 1;
+  transition: background 0.15s ease;
+}
+
+.split-handle::after {
+  content: "";
+  position: absolute;
+}
+
+.split-handle[data-direction="vertical"]::after {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+  transform: translateX(-50%);
+  background: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+}
+
+.split-handle[data-direction="horizontal"]::after {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+  transform: translateY(-50%);
+  background: var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
 }
 
 .split-handle:hover,
 .split-handle:active {
-  opacity: 1;
+  background: var(--vscode-sash-hoverBorder, rgba(128, 128, 128, 0.35));
+}
+
+.split-handle:hover::after,
+.split-handle:active::after {
+  background: transparent;
 }
 
 /* Cursor feedback for resize handles */

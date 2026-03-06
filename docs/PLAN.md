@@ -480,28 +480,28 @@ Allow users to **split terminal panes** horizontally and vertically within each 
 - [x] Tab bar reflects the active pane's session
 
 #### 5.6 Message Protocol Updates (~2h)
-- [ ] Update resize messages to include sessionId (each pane resizes independently)
-- [ ] Route input to the focused pane's session
-- [ ] Handle output routing to correct pane container
-- [ ] New messages:
+- [x] Update resize messages to include sessionId (each pane resizes independently)
+- [x] Route input to the focused pane's session
+- [x] Handle output routing to correct pane container
+- [x] New messages:
   - `{ type: 'splitTerminal', direction: 'horizontal' | 'vertical', sessionId: string }`
   - `{ type: 'closeSplitPane', sessionId: string }`
 
 #### 5.7 Integration & Edge Cases (~3h)
-- [ ] When a pane is closed, restructure the tree (promote sibling to parent's position)
-- [ ] When the last pane is closed, handle gracefully (create new default terminal or close view)
-- [ ] Resize all terminals when the overall view resizes (sidebar width change, etc.)
-- [ ] Persist split layout across webview hide/show cycles
-- [ ] Test recursive splitting: split → split again → split again → close inner panes
+- [x] When a pane is closed, restructure the tree (promote sibling to parent's position)
+- [x] When the last pane is closed, handle gracefully (create new default terminal or close view)
+- [x] Resize all terminals when the overall view resizes (sidebar width change, etc.)
+- [x] Persist split layout across webview hide/show cycles
+- [x] Test recursive splitting: split → split again → split again → close inner panes
 
 ### Phase 5 Acceptance Criteria
-- [ ] Can split any terminal pane horizontally or vertically
-- [ ] Can recursively split (split a split)
-- [ ] Drag handles resize panes smoothly
-- [ ] Each pane has its own independent terminal session
-- [ ] Focus management works correctly
-- [ ] Closing a pane restructures layout properly
-- [ ] Layout survives view hide/show cycles
+- [x] Can split any terminal pane horizontally or vertically
+- [x] Can recursively split (split a split)
+- [x] Drag handles resize panes smoothly
+- [x] Each pane has its own independent terminal session
+- [x] Focus management works correctly
+- [x] Closing a pane restructures layout properly
+- [x] Layout survives view hide/show cycles
 
 ---
 
