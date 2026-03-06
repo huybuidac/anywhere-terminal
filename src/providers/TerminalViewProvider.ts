@@ -1,17 +1,14 @@
-import * as crypto from "node:crypto";
 import * as vscode from "vscode";
-import * as PtyManager from "../pty/PtyManager";
-import { PtySession } from "../pty/PtySession";
-import { OutputBuffer } from "../session/OutputBuffer";
+import type { SessionManager } from "../session/SessionManager";
 import type { WebViewToExtensionMessage } from "../types/messages";
+import { getTerminalHtml } from "./webviewHtml";
 
 /**
  * WebviewViewProvider for sidebar and panel terminal views.
  *
  * The same class is instantiated per view location (sidebar, panel).
  * Each instance manages its own set of terminal sessions through a unique viewId.
- *
- * Phase 1: Single PTY session per view. SessionManager integration in Phase 2.
+ * All session operations are delegated to the shared SessionManager.
  *
  * See: docs/design/webview-provider.md
  */
@@ -22,22 +19,17 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
   /** The active webview view instance. Set after resolveWebviewView, cleared on dispose. */
   private _view: vscode.WebviewView | undefined;
 
-  /** Phase 1: Single PTY session per view. Will be replaced by SessionManager in Phase 2. */
-  private _ptySession: PtySession | undefined;
-  /** Phase 1: Single output buffer per view. Tied to the PTY session. */
-  private _outputBuffer: OutputBuffer | undefined;
-  /** Phase 1: Session ID for the active PTY session. Used for tabId validation. */
-  private _sessionId: string | undefined;
   /** Whether the webview has sent the 'ready' message. Gates outbound messages. */
   private _ready = false;
 
-  /** Public accessor for the current webview view (used by future SessionManager integration). */
+  /** Public accessor for the current webview view. */
   get view(): vscode.WebviewView | undefined {
     return this._view;
   }
 
   constructor(
     private readonly extensionUri: vscode.Uri,
+    private readonly sessionManager: SessionManager,
     private readonly location: "sidebar" | "panel" = "sidebar",
   ) {}
 
@@ -54,8 +46,8 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       localResourceRoots: [vscode.Uri.joinPath(this.extensionUri, "media")],
     };
 
-    // 2. Set HTML content
-    webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+    // 2. Set HTML content using shared utility
+    webviewView.webview.html = getTerminalHtml(webviewView.webview, this.extensionUri, this.location);
 
     // 3. Wire message handler and lifecycle handlers
     const disposables: vscode.Disposable[] = [];
@@ -75,13 +67,14 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
       }),
     );
 
-    // 5. Wire dispose handler — clean up all subscriptions and PTY
+    // 5. Wire dispose handler — clean up all subscriptions and sessions
     webviewView.onDidDispose(() => {
       for (const d of disposables) {
         d.dispose();
       }
-      this.cleanupSession();
+      this.sessionManager.destroyAllForView(this.getViewId());
       this._view = undefined;
+      this._ready = false;
     });
   }
 
@@ -106,45 +99,68 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           break;
 
         case "input":
-          // Defensive: ignore if no session, tabId mismatch, or invalid data
-          if (this._ptySession && message.tabId === this._sessionId && typeof message.data === "string") {
-            this._ptySession.write(message.data);
+          if (typeof message.tabId === "string" && typeof message.data === "string") {
+            this.sessionManager.writeToSession(message.tabId, message.data);
           }
           break;
 
         case "resize":
-          // Defensive: ignore if no session, tabId mismatch, or invalid dimensions
           if (
-            this._ptySession &&
-            message.tabId === this._sessionId &&
+            typeof message.tabId === "string" &&
             typeof message.cols === "number" &&
             typeof message.rows === "number" &&
             Number.isFinite(message.cols) &&
             Number.isFinite(message.rows)
           ) {
-            this._ptySession.resize(message.cols, message.rows);
+            this.sessionManager.resizeSession(message.tabId, message.cols, message.rows);
           }
           break;
 
         case "ack":
-          // Defensive: ignore if no output buffer exists
-          this._outputBuffer?.handleAck(message.charCount);
+          if (typeof message.charCount === "number") {
+            // Find the session for this ack — use the active session's output buffer
+            const tabs = this.sessionManager.getTabsForView(this.getViewId());
+            const activeTab = tabs.find((t) => t.isActive);
+            if (activeTab) {
+              this.sessionManager.handleAck(activeTab.id, message.charCount);
+            }
+          }
           break;
 
-        case "createTab":
-          // Phase 2: sessionManager.createSession(), send 'tabCreated' message
+        case "createTab": {
+          const viewId = this.getViewId();
+          const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview);
+          const newSession = this.sessionManager.getSession(newSessionId);
+          if (newSession) {
+            this.safePostMessage(webviewView.webview, {
+              type: "tabCreated",
+              tabId: newSessionId,
+              name: newSession.name,
+            });
+          }
           break;
+        }
 
         case "switchTab":
-          // Phase 2: sessionManager.switchActiveSession(viewId, message.tabId)
+          if (typeof message.tabId === "string") {
+            this.sessionManager.switchActiveSession(this.getViewId(), message.tabId);
+          }
           break;
 
         case "closeTab":
-          // Phase 2: sessionManager.destroySession(message.tabId), send 'tabRemoved'
+          if (typeof message.tabId === "string") {
+            this.sessionManager.destroySession(message.tabId);
+            this.safePostMessage(webviewView.webview, {
+              type: "tabRemoved",
+              tabId: message.tabId,
+            });
+          }
           break;
 
         case "clear":
-          // Phase 2: sessionManager.clearScrollback(message.tabId)
+          if (typeof message.tabId === "string") {
+            this.sessionManager.clearScrollback(message.tabId);
+          }
           break;
 
         default:
@@ -159,69 +175,27 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
   /**
    * Handle the 'ready' message from the webview.
-   * Spawns a PTY, creates an OutputBuffer, and sends 'init' to the webview.
+   * Creates a session via SessionManager and sends 'init' to the webview.
    *
    * See: specs/ipc-wiring/spec.md#Ready-Handshake-Wiring
    */
   private onReady(webviewView: vscode.WebviewView): void {
-    // Clean up any existing session (e.g., if webview was re-created)
-    this.cleanupSession();
-
     // Mark webview as ready — gates outbound messages
     this._ready = true;
 
     try {
-      // 1. Load node-pty
-      const nodePty = PtyManager.loadNodePty();
+      const viewId = this.getViewId();
 
-      // 2. Detect shell
-      const { shell, args } = PtyManager.detectShell();
+      // Create initial session via SessionManager
+      this.sessionManager.createSession(viewId, webviewView.webview);
 
-      // 3. Build environment
-      const env = PtyManager.buildEnvironment();
+      // Get tabs for the init message
+      const tabs = this.sessionManager.getTabsForView(viewId);
 
-      // 4. Resolve working directory
-      const cwd = PtyManager.resolveWorkingDirectory();
-
-      // 5. Create PtySession and spawn
-      const sessionId = crypto.randomUUID();
-      const ptySession = new PtySession(sessionId);
-      ptySession.spawn(nodePty, shell, args, { cwd, env });
-
-      // 6. Create OutputBuffer connected to PTY and webview
-      const outputBuffer = new OutputBuffer(sessionId, webviewView.webview, ptySession);
-
-      // Store references BEFORE wiring callbacks to prevent race conditions
-      // (PTY could exit immediately after spawn, before callbacks are wired)
-      this._ptySession = ptySession;
-      this._outputBuffer = outputBuffer;
-      this._sessionId = sessionId;
-
-      // 7. Wire PtySession.onData → OutputBuffer.append()
-      ptySession.onData = (data: string) => {
-        outputBuffer.append(data);
-      };
-
-      // 8. Wire PtySession.onExit → flush buffer + send exit message
-      ptySession.onExit = (code: number) => {
-        // Guard: ignore if this is a stale session (a new session has replaced us)
-        if (this._sessionId !== sessionId) {
-          return;
-        }
-        // Guard: cleanupSession() may have already disposed the buffer
-        if (this._outputBuffer) {
-          this._outputBuffer.dispose();
-          this._outputBuffer = undefined;
-        }
-        this.safePostMessage(webviewView.webview, { type: "exit", tabId: sessionId, code });
-        this._ptySession = undefined;
-        this._sessionId = undefined;
-      };
-
-      // 9. Send 'init' message to the webview with default config
+      // Send 'init' message to the webview with default config
       this.safePostMessage(webviewView.webview, {
         type: "init",
-        tabs: [{ id: sessionId, name: "Terminal 1", isActive: true }],
+        tabs,
         config: {
           fontSize: 14,
           cursorBlink: true,
@@ -229,9 +203,8 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         },
       });
     } catch (err) {
-      // Spawn failure: send error message, clean up partial state
+      // Spawn failure: send error message
       console.error("[AnyWhere Terminal] Failed to initialize terminal:", err);
-      this.cleanupSession();
 
       this.safePostMessage(webviewView.webview, {
         type: "error",
@@ -239,22 +212,6 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         severity: "error",
       });
     }
-  }
-
-  /**
-   * Clean up the current PTY session and output buffer.
-   */
-  private cleanupSession(): void {
-    if (this._outputBuffer) {
-      this._outputBuffer.dispose();
-      this._outputBuffer = undefined;
-    }
-    if (this._ptySession) {
-      this._ptySession.kill();
-      this._ptySession = undefined;
-    }
-    this._sessionId = undefined;
-    this._ready = false;
   }
 
   /**
@@ -276,72 +233,5 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
    */
   getViewId(): string {
     return this.location === "sidebar" ? TerminalViewProvider.sidebarViewType : TerminalViewProvider.panelViewType;
-  }
-
-  /**
-   * Generate secure HTML for the webview with CSP and nonce.
-   *
-   * See: docs/design/webview-provider.md#§4
-   */
-  private getHtmlForWebview(webview: vscode.Webview): string {
-    const nonce = crypto.randomBytes(16).toString("hex");
-
-    // Convert file paths to webview-safe URIs
-    const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "webview.js"));
-    const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(this.extensionUri, "media", "xterm.css"));
-
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none';
-                 style-src ${webview.cspSource} 'unsafe-inline';
-                 script-src 'nonce-${nonce}';
-                 font-src ${webview.cspSource};">
-  <link href="${styleUri}" rel="stylesheet">
-  <style>
-    html, body {
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-    }
-    body {
-      display: flex;
-      flex-direction: column;
-    }
-    #tab-bar {
-      flex-shrink: 0;
-    }
-    #terminal-container {
-      flex: 1;
-      overflow: hidden;
-      padding-left: 8px;
-      box-sizing: border-box;
-    }
-
-    /* Keep xterm's 1px overview-ruler/scrollbar lane invisible.
-       We still keep overviewRuler.width=1 in JS for FitAddon sizing math. */
-    .xterm .xterm-decoration-overview-ruler {
-      opacity: 0 !important;
-      pointer-events: none !important;
-    }
-
-    .xterm .xterm-scrollable-element > .scrollbar.vertical,
-    .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
-      background: transparent !important;
-      border: 0 !important;
-      box-shadow: none !important;
-    }
-  </style>
-</head>
-<body data-terminal-location="${this.location}">
-  <div id="tab-bar"></div>
-  <div id="terminal-container"></div>
-  <script nonce="${nonce}" src="${scriptUri}"></script>
-</body>
-</html>`;
   }
 }

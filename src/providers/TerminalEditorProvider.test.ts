@@ -6,11 +6,13 @@ import { __resetAll, __setAppRoot, __setWorkspaceFolders } from "../test/__mocks
 vi.mock("../pty/PtyManager", () => ({
   loadNodePty: vi.fn(() => ({
     spawn: vi.fn(() => ({
-      onData: { dispose: () => {} },
-      onExit: { dispose: () => {} },
+      onData: vi.fn(() => ({ dispose: () => {} })),
+      onExit: vi.fn(() => ({ dispose: () => {} })),
       write: vi.fn(),
       resize: vi.fn(),
       kill: vi.fn(),
+      pause: vi.fn(),
+      resume: vi.fn(),
       pid: 12345,
       process: "zsh",
     })),
@@ -28,6 +30,8 @@ vi.mock("../pty/PtySession", () => {
     write = vi.fn();
     resize = vi.fn();
     kill = vi.fn();
+    pause = vi.fn();
+    resume = vi.fn();
     onData: ((data: string) => void) | null = null;
     onExit: ((code: number) => void) | null = null;
     constructor(id: string) {
@@ -43,10 +47,16 @@ vi.mock("../session/OutputBuffer", () => {
     append = vi.fn();
     handleAck = vi.fn();
     dispose = vi.fn();
+    constructor(
+      public _tabId: string,
+      public _webview: unknown,
+      public _pty: unknown,
+    ) {}
   }
   return { OutputBuffer: MockOutputBuffer };
 });
 
+import { SessionManager } from "../session/SessionManager";
 import { TerminalEditorProvider } from "./TerminalEditorProvider";
 
 // ─── Test Setup ─────────────────────────────────────────────────────
@@ -76,20 +86,24 @@ function createMockContext() {
 describe("TerminalEditorProvider.createPanel", () => {
   it("returns a Disposable", () => {
     const ctx = createMockContext();
-    const disposable = TerminalEditorProvider.createPanel(ctx);
+    const sm = new SessionManager();
+    const disposable = TerminalEditorProvider.createPanel(ctx, sm);
 
     expect(disposable).toBeDefined();
     expect(typeof disposable.dispose).toBe("function");
+
+    sm.dispose();
   });
 
   it("creates a panel that responds to ready message by sending init", async () => {
     const ctx = createMockContext();
+    const sm = new SessionManager();
 
     // Spy on createWebviewPanel to capture the panel
     const vscode = await import("vscode");
     const createSpy = vi.spyOn(vscode.window, "createWebviewPanel");
 
-    TerminalEditorProvider.createPanel(ctx);
+    TerminalEditorProvider.createPanel(ctx, sm);
 
     expect(createSpy).toHaveBeenCalledWith(
       "anywhereTerminal.editor",
@@ -100,41 +114,50 @@ describe("TerminalEditorProvider.createPanel", () => {
         retainContextWhenHidden: true,
       }),
     );
+
+    sm.dispose();
   });
 
   it("sets data-terminal-location=editor in HTML", async () => {
     const ctx = createMockContext();
+    const sm = new SessionManager();
 
     const vscode = await import("vscode");
     const createSpy = vi.spyOn(vscode.window, "createWebviewPanel");
 
-    TerminalEditorProvider.createPanel(ctx);
+    TerminalEditorProvider.createPanel(ctx, sm);
 
     // The panel's webview.html should contain the location attribute
     const panel = createSpy.mock.results[0].value;
     expect(panel.webview.html).toContain('data-terminal-location="editor"');
+
+    sm.dispose();
   });
 
   it("sets CSP with nonce in HTML", async () => {
     const ctx = createMockContext();
+    const sm = new SessionManager();
 
     const vscode = await import("vscode");
     const createSpy = vi.spyOn(vscode.window, "createWebviewPanel");
 
-    TerminalEditorProvider.createPanel(ctx);
+    TerminalEditorProvider.createPanel(ctx, sm);
 
     const panel = createSpy.mock.results[0].value;
     expect(panel.webview.html).toContain("Content-Security-Policy");
     expect(panel.webview.html).toMatch(/nonce-[a-f0-9]{32}/);
+
+    sm.dispose();
   });
 
   it("spawns PTY on ready message and sends init", async () => {
     const ctx = createMockContext();
+    const sm = new SessionManager();
 
     const vscode = await import("vscode");
     const createSpy = vi.spyOn(vscode.window, "createWebviewPanel");
 
-    TerminalEditorProvider.createPanel(ctx);
+    TerminalEditorProvider.createPanel(ctx, sm);
 
     const panel = createSpy.mock.results[0].value;
     const postMessageSpy = vi.spyOn(panel.webview, "postMessage");
@@ -161,15 +184,18 @@ describe("TerminalEditorProvider.createPanel", () => {
         }),
       }),
     );
+
+    sm.dispose();
   });
 
   it("cleans up PTY on panel dispose", async () => {
     const ctx = createMockContext();
+    const sm = new SessionManager();
 
     const vscode = await import("vscode");
     const createSpy = vi.spyOn(vscode.window, "createWebviewPanel");
 
-    TerminalEditorProvider.createPanel(ctx);
+    TerminalEditorProvider.createPanel(ctx, sm);
 
     const panel = createSpy.mock.results[0].value;
 
@@ -180,17 +206,21 @@ describe("TerminalEditorProvider.createPanel", () => {
 
     // Dispose the panel — should not throw
     expect(() => panel.dispose()).not.toThrow();
+
+    sm.dispose();
   });
 
   it("creates independent panels on multiple invocations", () => {
     const ctx = createMockContext();
-    const d1 = TerminalEditorProvider.createPanel(ctx);
-    const d2 = TerminalEditorProvider.createPanel(ctx);
+    const sm = new SessionManager();
+    const d1 = TerminalEditorProvider.createPanel(ctx, sm);
+    const d2 = TerminalEditorProvider.createPanel(ctx, sm);
 
     expect(d1).not.toBe(d2);
 
     // Clean up
     d1.dispose();
     d2.dispose();
+    sm.dispose();
   });
 });
