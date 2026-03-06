@@ -464,20 +464,20 @@ Allow users to **split terminal panes** horizontally and vertically within each 
 - [x] Re-fit all affected terminals after resize
 
 #### 5.4 Split Actions & Commands (~3h)
-- [ ] Add commands:
+- [x] Add commands:
   - `anywhereTerminal.splitHorizontal` — split active terminal horizontally
   - `anywhereTerminal.splitVertical` — split active terminal vertically
   - `anywhereTerminal.closeSplitPane` — close active pane (unsplit)
-- [ ] Add split buttons to tab bar or terminal toolbar (split-horizontal icon, split-vertical icon)
-- [ ] Context menu entries for split actions
-- [ ] Keyboard shortcuts (e.g., Cmd+\ for vertical split, Cmd+Shift+\ for horizontal)
+- [x] Add split buttons to tab bar or terminal toolbar (split-horizontal icon, split-vertical icon)
+- [x] Context menu entries for split actions
+- [x] Keyboard shortcuts (e.g., Cmd+\ for vertical split, Cmd+Shift+\ for horizontal)
 
 #### 5.5 Focus Management (~2h)
-- [ ] Track which pane is "active" (focused)
-- [ ] Visual indicator for active pane (border highlight or subtle background change)
-- [ ] Click on a pane to focus it
-- [ ] Active pane receives keyboard input
-- [ ] Tab bar reflects the active pane's session
+- [x] Track which pane is "active" (focused)
+- [x] Visual indicator for active pane (border highlight or subtle background change)
+- [x] Click on a pane to focus it
+- [x] Active pane receives keyboard input
+- [x] Tab bar reflects the active pane's session
 
 #### 5.6 Message Protocol Updates (~2h)
 - [ ] Update resize messages to include sessionId (each pane resizes independently)

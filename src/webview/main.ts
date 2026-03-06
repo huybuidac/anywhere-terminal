@@ -856,6 +856,8 @@ function removeTerminal(id: string): void {
       switchTab(remainingTabs[remainingTabs.length - 1]);
     } else {
       activeTabId = null;
+      // Last tab removed — request a new default terminal
+      vscode.postMessage({ type: "createTab" });
     }
   }
 
