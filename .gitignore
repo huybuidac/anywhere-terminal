@@ -4,7 +4,7 @@ node_modules
 .vscode-test/
 *.
 .agents/skills/cyberk-flow
-.agents/workflows/cf-*
+.agents/workflows/cyberk-flow
 .opencode/plugins/cyber-flow.ts
 
 # Build artifacts in media/
