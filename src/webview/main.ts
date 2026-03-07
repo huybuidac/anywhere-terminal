@@ -168,6 +168,73 @@ function restoreLayoutState(): Map<string, SplitNode> {
   return restored;
 }
 
+// ─── Close Split Pane by ID ─────────────────────────────────────────
+
+/**
+ * Close a specific split pane by session ID within the active tab.
+ * If the pane is the only one in the tab, closes the entire tab.
+ * Extracted from the closeSplitPane message handler for reuse by context menu.
+ */
+function closeSplitPaneById(paneSessionId: string): void {
+  if (!activeTabId) {
+    return;
+  }
+  const layout = tabLayouts.get(activeTabId);
+  if (!layout) {
+    return;
+  }
+
+  // If the layout is a single leaf, fall back to tab close
+  if (layout.type === "leaf") {
+    vscode.postMessage({ type: "closeTab", tabId: activeTabId });
+    return;
+  }
+
+  // Remove the pane from the split tree
+  const updatedLayout = removeLeaf(layout, paneSessionId);
+
+  if (updatedLayout === null) {
+    vscode.postMessage({ type: "closeTab", tabId: activeTabId });
+    return;
+  }
+
+  // Find the sibling to focus (first leaf in the remaining tree)
+  const remainingIds = getAllSessionIds(updatedLayout);
+  const newActivePaneId = remainingIds[0] ?? activeTabId;
+
+  // Update state
+  tabLayouts.set(activeTabId, updatedLayout);
+  tabActivePaneIds.set(activeTabId, newActivePaneId);
+
+  // Destroy the terminal instance for the closed pane
+  const closedInstance = terminals.get(paneSessionId);
+  if (closedInstance) {
+    closedInstance.terminal.dispose();
+    closedInstance.container.remove();
+    terminals.delete(paneSessionId);
+  }
+
+  // Request the extension host to destroy the session
+  vscode.postMessage({ type: "requestCloseSplitPane", sessionId: paneSessionId });
+
+  // Re-render the split tree
+  _renderTabSplitTree(activeTabId);
+  showTabContainer(activeTabId);
+  persistLayoutState();
+
+  // Fit and focus
+  const currentActiveTabId = activeTabId;
+  requestAnimationFrame(() => {
+    debouncedFitAllLeaves(currentActiveTabId!);
+    const siblingInstance = terminals.get(newActivePaneId);
+    if (siblingInstance) {
+      siblingInstance.terminal.focus();
+    }
+  });
+
+  updateTabBar();
+}
+
 /**
  * Render the split tree for a tab and attach terminals to leaf containers.
  * Also attaches resize handles to branch nodes.
@@ -625,6 +692,11 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
   container.style.width = "100%";
   container.style.height = "100%";
   container.style.display = isActive ? "block" : "none";
+  // VS Code native context menu support — always set on terminal container
+  container.dataset.vscodeContext = JSON.stringify({
+    webviewSection: "splitPane",
+    paneSessionId: id,
+  });
   containerEl.appendChild(container);
 
   // Create xterm.js Terminal with config
@@ -1072,63 +1144,30 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
       if (!activeTabId) {
         break;
       }
-      const layout = tabLayouts.get(activeTabId);
-      if (!layout) {
-        break;
-      }
-
       const activePaneId = tabActivePaneIds.get(activeTabId) ?? activeTabId;
+      closeSplitPaneById(activePaneId);
+      break;
+    }
 
-      // If the layout is a single leaf, fall back to tab close
-      if (layout.type === "leaf") {
-        vscode.postMessage({ type: "closeTab", tabId: activeTabId });
-        break;
+    case "closeSplitPaneById": {
+      // Close a specific pane by session ID (from context menu)
+      if (msg.sessionId) {
+        closeSplitPaneById(msg.sessionId);
       }
+      break;
+    }
 
-      // Remove the active pane from the split tree
-      const updatedLayout = removeLeaf(layout, activePaneId);
-
-      if (updatedLayout === null) {
-        // Tree is empty — close the tab
-        vscode.postMessage({ type: "closeTab", tabId: activeTabId });
-        break;
+    case "splitPaneAt": {
+      // Split a specific pane (from context menu) — set it as active, then request split
+      if (activeTabId && msg.direction && msg.sourcePaneId) {
+        tabActivePaneIds.set(activeTabId, msg.sourcePaneId);
+        updateActivePaneVisual(activeTabId);
+        vscode.postMessage({
+          type: "requestSplitSession",
+          direction: msg.direction,
+          sourcePaneId: msg.sourcePaneId,
+        });
       }
-
-      // Find the sibling to focus (first leaf in the remaining tree)
-      const remainingIds = getAllSessionIds(updatedLayout);
-      const newActivePaneId = remainingIds[0] ?? activeTabId;
-
-      // Update state
-      tabLayouts.set(activeTabId, updatedLayout);
-      tabActivePaneIds.set(activeTabId, newActivePaneId);
-
-      // Destroy the terminal instance for the closed pane
-      const closedInstance = terminals.get(activePaneId);
-      if (closedInstance) {
-        closedInstance.terminal.dispose();
-        closedInstance.container.remove();
-        terminals.delete(activePaneId);
-      }
-
-      // Request the extension host to destroy the session
-      vscode.postMessage({ type: "requestCloseSplitPane", sessionId: activePaneId });
-
-      // Re-render the split tree
-      _renderTabSplitTree(activeTabId);
-      showTabContainer(activeTabId);
-      persistLayoutState();
-
-      // Fit and focus
-      requestAnimationFrame(() => {
-        debouncedFitAllLeaves(activeTabId!);
-        const siblingInstance = terminals.get(newActivePaneId);
-        if (siblingInstance) {
-          siblingInstance.terminal.focus();
-        }
-      });
-
-      // Update tab bar
-      updateTabBar();
       break;
     }
 

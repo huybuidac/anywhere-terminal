@@ -158,6 +158,18 @@
         "command": "anywhereTerminal.splitVertical.panel",
         "title": "AnyWhere Terminal: Split Vertical (Panel)",
         "icon": "media/split-vertical.svg"
+      },
+      {
+        "command": "anywhereTerminal.ctx.closePane",
+        "title": "Close Pane"
+      },
+      {
+        "command": "anywhereTerminal.ctx.splitVertical",
+        "title": "Split Vertical"
+      },
+      {
+        "command": "anywhereTerminal.ctx.splitHorizontal",
+        "title": "Split Horizontal"
       }
     ],
     "menus": {
@@ -201,6 +213,69 @@
           "command": "anywhereTerminal.killTerminal.panel",
           "when": "view == anywhereTerminal.panel",
           "group": "navigation"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "anywhereTerminal.ctx.closePane",
+          "when": "webviewSection == 'splitPane'",
+          "group": "pane@1"
+        },
+        {
+          "command": "anywhereTerminal.ctx.splitVertical",
+          "when": "webviewSection == 'splitPane'",
+          "group": "split@1"
+        },
+        {
+          "command": "anywhereTerminal.ctx.splitHorizontal",
+          "when": "webviewSection == 'splitPane'",
+          "group": "split@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "anywhereTerminal.ctx.closePane",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.ctx.splitVertical",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.ctx.splitHorizontal",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.newTerminal.sidebar",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.newTerminal.panel",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.killTerminal.sidebar",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.killTerminal.panel",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.splitHorizontal.sidebar",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.splitHorizontal.panel",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.splitVertical.sidebar",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.splitVertical.panel",
+          "when": "false"
         }
       ]
     },

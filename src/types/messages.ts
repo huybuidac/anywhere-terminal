@@ -219,6 +219,19 @@ export interface CloseSplitPaneMessage {
   type: "closeSplitPane";
 }
 
+/** Close a specific split pane by session ID (from context menu). */
+export interface CloseSplitPaneByIdMessage {
+  type: "closeSplitPaneById";
+  sessionId: string;
+}
+
+/** Split a specific pane by session ID (from context menu). */
+export interface SplitPaneAtMessage {
+  type: "splitPaneAt";
+  direction: "horizontal" | "vertical";
+  sourcePaneId: string;
+}
+
 /**
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
@@ -235,4 +248,6 @@ export type ExtensionToWebViewMessage =
   | ViewShowMessage
   | SplitPaneMessage
   | SplitPaneCreatedMessage
-  | CloseSplitPaneMessage;
+  | CloseSplitPaneMessage
+  | CloseSplitPaneByIdMessage
+  | SplitPaneAtMessage;

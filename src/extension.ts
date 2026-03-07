@@ -149,6 +149,39 @@ export function activate(context: vscode.ExtensionContext) {
     );
   }
 
+  // ─── Webview Context Menu Commands ────────────────────────────────
+  // These are triggered from right-click on split panes via webview/context menus.
+  // VS Code passes the data-vscode-context values as the command argument.
+
+  /** Post a message to whichever provider's webview is visible. */
+  const postToVisibleWebview = (message: unknown): void => {
+    // Try both providers — only the one whose webview contains the element will match
+    for (const provider of [sidebarProvider, panelProvider]) {
+      const view = provider.view;
+      if (view?.visible) {
+        safePostMessage(view.webview, message);
+      }
+    }
+  };
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("anywhereTerminal.ctx.closePane", (ctx: { paneSessionId?: string }) => {
+      if (ctx?.paneSessionId) {
+        postToVisibleWebview({ type: "closeSplitPaneById", sessionId: ctx.paneSessionId });
+      }
+    }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.splitVertical", (ctx: { paneSessionId?: string }) => {
+      if (ctx?.paneSessionId) {
+        postToVisibleWebview({ type: "splitPaneAt", direction: "vertical", sourcePaneId: ctx.paneSessionId });
+      }
+    }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.splitHorizontal", (ctx: { paneSessionId?: string }) => {
+      if (ctx?.paneSessionId) {
+        postToVisibleWebview({ type: "splitPaneAt", direction: "horizontal", sourcePaneId: ctx.paneSessionId });
+      }
+    }),
+  );
+
   // ─── Focus & Move Commands ──────────────────────────────────────
 
   context.subscriptions.push(

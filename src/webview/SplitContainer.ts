@@ -46,6 +46,11 @@ export function renderSplitTree(
     const leafEl = document.createElement("div");
     leafEl.className = "split-leaf";
     leafEl.dataset.sessionId = node.sessionId;
+    // VS Code native context menu support — set context keys for webview/context menus
+    leafEl.dataset.vscodeContext = JSON.stringify({
+      webviewSection: "splitPane",
+      paneSessionId: node.sessionId,
+    });
     leafEl.style.overflow = "hidden";
     leafEl.style.position = "relative";
     parent.appendChild(leafEl);
