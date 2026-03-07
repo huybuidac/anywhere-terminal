@@ -19,10 +19,49 @@ export const env = {
 
 // ─── workspace ──────────────────────────────────────────────────────
 
+/** Mock configuration store — maps section.key to value. */
+let _mockConfigValues: Record<string, unknown> = {};
+
+/** Mock configuration change handlers. */
+const _configChangeHandlers: Array<(e: { affectsConfiguration: (section: string) => boolean }) => void> = [];
+
+/** Creates a mock configuration object for a given section. */
+function createMockConfiguration(section: string) {
+  return {
+    get: <T>(key: string, defaultValue?: T): T | undefined => {
+      const fullKey = section ? `${section}.${key}` : key;
+      const value = _mockConfigValues[fullKey];
+      return (value !== undefined ? value : defaultValue) as T | undefined;
+    },
+    has: (key: string): boolean => {
+      const fullKey = section ? `${section}.${key}` : key;
+      return fullKey in _mockConfigValues;
+    },
+    update: () => Promise.resolve(),
+    inspect: () => undefined,
+  };
+}
+
 export const workspace: {
   workspaceFolders: Array<{ uri: { fsPath: string } }> | undefined;
+  getConfiguration: (section?: string) => ReturnType<typeof createMockConfiguration>;
+  onDidChangeConfiguration: (handler: (e: { affectsConfiguration: (section: string) => boolean }) => void) => {
+    dispose: () => void;
+  };
 } = {
   workspaceFolders: undefined,
+  getConfiguration: (section = "") => createMockConfiguration(section),
+  onDidChangeConfiguration: (handler) => {
+    _configChangeHandlers.push(handler);
+    return {
+      dispose: () => {
+        const idx = _configChangeHandlers.indexOf(handler);
+        if (idx !== -1) {
+          _configChangeHandlers.splice(idx, 1);
+        }
+      },
+    };
+  },
 };
 
 // ─── extensions ─────────────────────────────────────────────────────
@@ -125,9 +164,27 @@ export function __setAppRoot(appRoot: string): void {
   env.appRoot = appRoot;
 }
 
+/** Set mock configuration values for testing. Keys should be fully qualified (e.g., "anywhereTerminal.fontSize"). */
+export function __setConfigValues(values: Record<string, unknown>): void {
+  _mockConfigValues = { ...values };
+}
+
+/** Fire a mock configuration change event. */
+export function __fireConfigChange(affectedSections: string[]): void {
+  const event = {
+    affectsConfiguration: (section: string) =>
+      affectedSections.some((s) => s === section || s.startsWith(`${section}.`)),
+  };
+  for (const handler of _configChangeHandlers) {
+    handler(event);
+  }
+}
+
 /** Reset all mock state to defaults. */
 export function __resetAll(): void {
   env.appRoot = "/mock/vscode/app";
   workspace.workspaceFolders = undefined;
   _mockExtension = undefined;
+  _mockConfigValues = {};
+  _configChangeHandlers.length = 0;
 }

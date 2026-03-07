@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { TerminalEditorProvider } from "./providers/TerminalEditorProvider";
 import { TerminalViewProvider } from "./providers/TerminalViewProvider";
 import { SessionManager } from "./session/SessionManager";
+import { affectsTerminalConfig, readTerminalConfig, readTerminalSettings } from "./settings/SettingsReader";
 
 export function activate(context: vscode.ExtensionContext) {
   // Create shared SessionManager (singleton)
@@ -70,7 +71,12 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
     const viewId = provider.getViewId();
-    const newSessionId = sessionManager.createSession(viewId, view.webview);
+    const settings = readTerminalSettings();
+    const newSessionId = sessionManager.createSession(viewId, view.webview, {
+      shell: settings.shell,
+      shellArgs: settings.shellArgs,
+      cwd: settings.cwd,
+    });
     const newSession = sessionManager.getSession(newSessionId);
     if (newSession) {
       safePostMessage(view.webview, {
@@ -178,6 +184,34 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("anywhereTerminal.ctx.splitHorizontal", (ctx: { paneSessionId?: string }) => {
       if (ctx?.paneSessionId) {
         postToVisibleWebview({ type: "splitPaneAt", direction: "horizontal", sourcePaneId: ctx.paneSessionId });
+      }
+    }),
+  );
+
+  // ─── Configuration Change Listener ────────────────────────────────
+  // Push updated config to all active webviews when relevant settings change.
+  // See: specs/extension-settings/spec.md#settings-change-listener
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!affectsTerminalConfig(e)) {
+        return;
+      }
+
+      const config = readTerminalConfig();
+      const configUpdateMessage = { type: "configUpdate" as const, config };
+
+      // Push to sidebar and panel providers
+      for (const provider of [sidebarProvider, panelProvider]) {
+        const view = provider.view;
+        if (view) {
+          safePostMessage(view.webview, configUpdateMessage);
+        }
+      }
+
+      // Push to all editor panels
+      for (const panel of TerminalEditorProvider.getActivePanels()) {
+        safePostMessage(panel.webview, configUpdateMessage);
       }
     }),
   );

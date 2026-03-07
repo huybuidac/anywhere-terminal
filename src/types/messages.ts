@@ -12,6 +12,8 @@ export interface TerminalConfig {
   cursorBlink: boolean;
   /** Maximum number of lines in the scrollback buffer */
   scrollback: number;
+  /** Font family (empty string = inherit from VS Code) */
+  fontFamily: string;
 }
 
 // ─── WebView → Extension Messages ───────────────────────────────────

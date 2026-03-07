@@ -1,5 +1,6 @@
 import * as vscode from "vscode";
 import type { SessionManager } from "../session/SessionManager";
+import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
 import type { WebViewToExtensionMessage } from "../types/messages";
 import { getTerminalHtml } from "./webviewHtml";
 
@@ -151,7 +152,12 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
         case "createTab": {
           const viewId = this.getViewId();
-          const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview);
+          const settings = readTerminalSettings();
+          const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, {
+            shell: settings.shell,
+            shellArgs: settings.shellArgs,
+            cwd: settings.cwd,
+          });
           const newSession = this.sessionManager.getSession(newSessionId);
           if (newSession) {
             this.safePostMessage(webviewView.webview, {
@@ -192,7 +198,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           ) {
             const splitMsg = message as { direction: "horizontal" | "vertical"; sourcePaneId: string };
             const viewId = this.getViewId();
-            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, { isSplitPane: true });
+            const splitSettings = readTerminalSettings();
+            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, {
+              isSplitPane: true,
+              shell: splitSettings.shell,
+              shellArgs: splitSettings.shellArgs,
+              cwd: splitSettings.cwd,
+            });
             const newSession = this.sessionManager.getSession(newSessionId);
             if (newSession) {
               this.safePostMessage(webviewView.webview, {
@@ -250,11 +262,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         this.safePostMessage(webviewView.webview, {
           type: "init",
           tabs: existingTabs,
-          config: {
-            fontSize: 14,
-            cursorBlink: true,
-            scrollback: 10000,
-          },
+          config: readTerminalConfig(),
         });
 
         // Send 'restore' messages with scrollback data for each session
@@ -272,21 +280,22 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         // Resume output flushing for the view
         this.sessionManager.resumeOutputForView(viewId);
       } else {
-        // First-time creation: create initial session
-        this.sessionManager.createSession(viewId, webviewView.webview);
+        // First-time creation: create initial session with resolved settings
+        const settings = readTerminalSettings();
+        this.sessionManager.createSession(viewId, webviewView.webview, {
+          shell: settings.shell,
+          shellArgs: settings.shellArgs,
+          cwd: settings.cwd,
+        });
 
         // Get tabs for the init message
         const tabs = this.sessionManager.getTabsForView(viewId);
 
-        // Send 'init' message to the webview with default config
+        // Send 'init' message to the webview with resolved config
         this.safePostMessage(webviewView.webview, {
           type: "init",
           tabs,
-          config: {
-            fontSize: 14,
-            cursorBlink: true,
-            scrollback: 10000,
-          },
+          config: readTerminalConfig(),
         });
       }
     } catch (err) {

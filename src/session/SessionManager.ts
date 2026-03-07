@@ -91,9 +91,16 @@ export class SessionManager {
    * @param options.isSplitPane If true, marks the session as a split pane.
    *   Split pane sessions are excluded from getTabsForView() and do NOT
    *   deactivate existing sessions.
+   * @param options.shell Optional shell path override (from settings).
+   * @param options.shellArgs Optional shell arguments override (from settings).
+   * @param options.cwd Optional working directory override (from settings).
    * @returns The session ID (UUID)
    */
-  createSession(viewId: string, webview: MessageSender, options?: { isSplitPane?: boolean }): string {
+  createSession(
+    viewId: string,
+    webview: MessageSender,
+    options?: { isSplitPane?: boolean; shell?: string; shellArgs?: string[]; cwd?: string },
+  ): string {
     const isSplitPane = options?.isSplitPane ?? false;
     const id = crypto.randomUUID();
     const number = this.findAvailableNumber();
@@ -101,13 +108,27 @@ export class SessionManager {
 
     // Load PTY infrastructure
     const nodePty = PtyManager.loadNodePty();
-    const { shell, args } = PtyManager.detectShell();
+
+    // Use provided shell/args or auto-detect
+    const shell = options?.shell;
+    const shellArgs = options?.shellArgs;
+    let resolvedShell: string;
+    let resolvedArgs: string[];
+    if (shell) {
+      resolvedShell = shell;
+      resolvedArgs = shellArgs ?? [];
+    } else {
+      const detected = PtyManager.detectShell();
+      resolvedShell = detected.shell;
+      resolvedArgs = shellArgs && shellArgs.length > 0 ? shellArgs : detected.args;
+    }
+
     const env = PtyManager.buildEnvironment();
-    const cwd = PtyManager.resolveWorkingDirectory();
+    const cwd = options?.cwd || PtyManager.resolveWorkingDirectory();
 
     // Spawn PTY
     const pty = new PtySession(id);
-    pty.spawn(nodePty, shell, args, { cwd, env });
+    pty.spawn(nodePty, resolvedShell, resolvedArgs, { cwd, env });
 
     // Create OutputBuffer
     const outputBuffer = new OutputBuffer(id, webview, pty);

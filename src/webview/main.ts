@@ -82,6 +82,7 @@ let currentConfig: TerminalConfig = {
   fontSize: 14,
   cursorBlink: true,
   scrollback: 10000,
+  fontFamily: "",
 };
 
 /** Flow control: accumulated chars since last ack. */
@@ -486,12 +487,33 @@ function getXtermTheme(location: TerminalLocation = "sidebar"): Record<string, s
 }
 
 /**
+ * Detect whether the current VS Code theme is a high-contrast theme.
+ * High-contrast themes add `vscode-high-contrast` or `vscode-high-contrast-light` class to body.
+ */
+function isHighContrastTheme(): boolean {
+  return (
+    document.body.classList.contains("vscode-high-contrast") ||
+    document.body.classList.contains("vscode-high-contrast-light")
+  );
+}
+
+/**
+ * Get the appropriate minimum contrast ratio based on the current theme.
+ * High-contrast themes use 7 (WCAG AAA), normal themes use 4.5 (WCAG AA).
+ */
+function getMinimumContrastRatio(): number {
+  return isHighContrastTheme() ? 7 : 4.5;
+}
+
+/**
  * Apply the current theme to all terminal instances.
  */
 function applyThemeToAll(): void {
   const theme = getXtermTheme(terminalLocation);
+  const contrastRatio = getMinimumContrastRatio();
   for (const instance of terminals.values()) {
     instance.terminal.options.theme = theme;
+    instance.terminal.options.minimumContrastRatio = contrastRatio;
   }
 }
 
@@ -704,16 +726,17 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
   // for the scrollbar. FitAddon calculates: scrollbarWidth = scrollback === 0 ? 0 : (overviewRuler?.width || 14).
   // Setting width=0 doesn't work because 0 is falsy (0||14=14). Width=1 is truthy and
   // makes the Viewport's scrollbar element only 1px wide — effectively invisible.
+  const resolvedFontFamily = config.fontFamily || getFontFamily();
   const terminal = new Terminal({
     scrollback: config.scrollback || 10000,
     cursorBlink: config.cursorBlink ?? true,
     cursorStyle: "block",
     fontSize: config.fontSize || 14,
-    fontFamily: getFontFamily(),
+    fontFamily: resolvedFontFamily,
     macOptionIsMeta: false,
     macOptionClickForcesSelection: true,
     drawBoldTextInBrightColors: true,
-    minimumContrastRatio: 4.5,
+    minimumContrastRatio: getMinimumContrastRatio(),
     rightClickSelectsWord: false,
     fastScrollSensitivity: 5,
     tabStopWidth: 8,
@@ -998,6 +1021,11 @@ function applyConfig(config: Partial<TerminalConfig>): void {
   if (config.scrollback !== undefined) {
     currentConfig.scrollback = config.scrollback;
   }
+  if (config.fontFamily !== undefined) {
+    currentConfig.fontFamily = config.fontFamily;
+  }
+
+  const needsRefit = config.fontSize !== undefined || config.fontFamily !== undefined;
 
   for (const instance of terminals.values()) {
     const term = instance.terminal;
@@ -1012,9 +1040,13 @@ function applyConfig(config: Partial<TerminalConfig>): void {
     if (config.scrollback !== undefined) {
       term.options.scrollback = config.scrollback;
     }
+    if (config.fontFamily !== undefined) {
+      // Empty fontFamily falls back to CSS variable → 'monospace'
+      term.options.fontFamily = config.fontFamily || getFontFamily();
+    }
 
-    // Refit after font size changes (affects cell dimensions)
-    if (config.fontSize !== undefined) {
+    // Refit after font changes (affects cell dimensions)
+    if (needsRefit) {
       instance.fitAddon.fit();
     }
   }

@@ -1,6 +1,7 @@
 import * as crypto from "node:crypto";
 import * as vscode from "vscode";
 import type { SessionManager } from "../session/SessionManager";
+import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
 import type { WebViewToExtensionMessage } from "../types/messages";
 import { getTerminalHtml } from "./webviewHtml";
 
@@ -16,6 +17,14 @@ import { getTerminalHtml } from "./webviewHtml";
  */
 export class TerminalEditorProvider {
   public static readonly viewType = "anywhereTerminal.editor";
+
+  /** Track all active editor panels for config updates. */
+  private static readonly _activePanels = new Set<vscode.WebviewPanel>();
+
+  /** Get all active editor panels (for pushing config updates). */
+  static getActivePanels(): ReadonlySet<vscode.WebviewPanel> {
+    return TerminalEditorProvider._activePanels;
+  }
 
   /** The unique view ID for this editor panel's sessions. */
   private readonly _viewId: string;
@@ -53,6 +62,9 @@ export class TerminalEditorProvider {
     );
 
     const _provider = new TerminalEditorProvider(context.extensionUri, sessionManager, panel);
+
+    // Track this panel for config updates
+    TerminalEditorProvider._activePanels.add(panel);
 
     // Return a disposable that cleans up via panel dispose (which triggers onDidDispose → destroyAllForView)
     return {
@@ -92,6 +104,7 @@ export class TerminalEditorProvider {
       for (const d of disposables) {
         d.dispose();
       }
+      TerminalEditorProvider._activePanels.delete(this._panel);
       this.sessionManager.destroyAllForView(this._viewId);
     });
   }
@@ -145,7 +158,12 @@ export class TerminalEditorProvider {
           break;
 
         case "createTab": {
-          const newSessionId = this.sessionManager.createSession(this._viewId, this._panel.webview);
+          const createSettings = readTerminalSettings();
+          const newSessionId = this.sessionManager.createSession(this._viewId, this._panel.webview, {
+            shell: createSettings.shell,
+            shellArgs: createSettings.shellArgs,
+            cwd: createSettings.cwd,
+          });
           const newSession = this.sessionManager.getSession(newSessionId);
           if (newSession) {
             this.safePostMessage({
@@ -195,8 +213,13 @@ export class TerminalEditorProvider {
     this._ready = true;
 
     try {
-      // Create initial session via SessionManager
-      this.sessionManager.createSession(this._viewId, this._panel.webview);
+      // Create initial session via SessionManager with resolved settings
+      const settings = readTerminalSettings();
+      this.sessionManager.createSession(this._viewId, this._panel.webview, {
+        shell: settings.shell,
+        shellArgs: settings.shellArgs,
+        cwd: settings.cwd,
+      });
 
       // Get tabs for the init message
       const tabs = this.sessionManager.getTabsForView(this._viewId);
@@ -204,11 +227,7 @@ export class TerminalEditorProvider {
       this.safePostMessage({
         type: "init",
         tabs,
-        config: {
-          fontSize: 14,
-          cursorBlink: true,
-          scrollback: 10000,
-        },
+        config: readTerminalConfig(),
       });
     } catch (err) {
       console.error("[AnyWhere Terminal] Failed to initialize editor terminal:", err);
