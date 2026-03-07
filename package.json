@@ -2,7 +2,7 @@
   "name": "anywhere-terminal",
   "displayName": "AnyWhere Terminal",
   "description": "Break free from the bottom panel! Put your terminal anywhere: Primary Sidebar, Secondary Sidebar, or multiple panels at once.",
-  "version": "0.2.5",
+  "version": "0.3.0",
   "publisher": "huybuidac",
   "license": "MIT",
   "icon": "media/icon.png",
