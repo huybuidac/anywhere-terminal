@@ -123,6 +123,53 @@ export function getTerminalHtml(
       background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
       color: var(--vscode-tab-activeForeground, #fff);
     }
+    .tab-exited .tab-name {
+      opacity: 0.5;
+      font-style: italic;
+    }
+    .error-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-family: var(--vscode-font-family, sans-serif);
+      color: #fff;
+      z-index: 100;
+      flex-shrink: 0;
+    }
+    .error-banner-error {
+      background: #c72e2e;
+    }
+    .error-banner-warn {
+      background: #b5850a;
+    }
+    .error-banner-info {
+      background: #1a6fb5;
+    }
+    .error-banner-message {
+      flex: 1;
+      margin-right: 8px;
+    }
+    .error-banner-dismiss {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 18px;
+      height: 18px;
+      border: none;
+      background: transparent;
+      color: #fff;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0;
+      opacity: 0.7;
+      border-radius: 3px;
+    }
+    .error-banner-dismiss:hover {
+      opacity: 1;
+      background: rgba(255,255,255,0.2);
+    }
     #terminal-container {
       flex: 1;
       overflow: hidden;

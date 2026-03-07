@@ -6,6 +6,8 @@
 /** Minimal terminal info needed for tab bar rendering. */
 export interface TabInfo {
   name: string;
+  /** Whether the terminal process has exited. */
+  exited?: boolean;
 }
 
 /** Dependencies for renderTabBar — injected for testability. */
@@ -36,12 +38,12 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
   // 2. Create tab elements
   for (const [id, instance] of terminals) {
     const tab = document.createElement("div");
-    tab.className = `tab-item${id === activeTabId ? " active" : ""}`;
+    tab.className = `tab-item${id === activeTabId ? " active" : ""}${instance.exited ? " tab-exited" : ""}`;
     tab.dataset.tabId = id;
 
     const nameSpan = document.createElement("span");
     nameSpan.className = "tab-name";
-    nameSpan.textContent = instance.name;
+    nameSpan.textContent = instance.exited ? `${instance.name} (exited)` : instance.name;
     tab.appendChild(nameSpan);
 
     const closeBtn = document.createElement("button");

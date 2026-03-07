@@ -222,6 +222,77 @@ describe("TerminalViewProvider: getActiveSessionId", () => {
   });
 });
 
+// ─── safeSendWithRetry ──────────────────────────────────────────────
+
+describe("TerminalViewProvider: safeSendWithRetry via createTab", () => {
+  it("retries postMessage when first attempt returns false then succeeds", async () => {
+    const sm = new SessionManager();
+    const provider = new TerminalViewProvider({ fsPath: "/mock/extension" } as vscode.Uri, sm, "sidebar");
+
+    const { webviewView, messageHandlers, postMessageSpy } = createMockWebviewView();
+    provider.resolveWebviewView(webviewView, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+
+    // Simulate ready
+    for (const handler of messageHandlers) {
+      handler({ type: "ready" });
+    }
+
+    // Reset spy and make it fail once then succeed
+    postMessageSpy.mockReset();
+    let callCount = 0;
+    postMessageSpy.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) {
+        return Promise.resolve(false); // First attempt fails
+      }
+      return Promise.resolve(true); // Retry succeeds
+    });
+
+    // Trigger createTab which uses safeSendWithRetry
+    for (const handler of messageHandlers) {
+      handler({ type: "createTab" });
+    }
+
+    // Wait for retries to complete
+    await new Promise<void>((resolve) => setTimeout(resolve, 200));
+
+    // Should have been called at least twice (retry)
+    expect(postMessageSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    sm.dispose();
+  });
+
+  it("returns false after all retries exhausted", async () => {
+    const sm = new SessionManager();
+    const provider = new TerminalViewProvider({ fsPath: "/mock/extension" } as vscode.Uri, sm, "sidebar");
+
+    const { webviewView, messageHandlers, postMessageSpy } = createMockWebviewView();
+    provider.resolveWebviewView(webviewView, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+
+    // Simulate ready
+    for (const handler of messageHandlers) {
+      handler({ type: "ready" });
+    }
+
+    // Reset spy and make it always fail
+    postMessageSpy.mockReset();
+    postMessageSpy.mockImplementation(() => Promise.resolve(false));
+
+    // Trigger createTab which uses safeSendWithRetry
+    for (const handler of messageHandlers) {
+      handler({ type: "createTab" });
+    }
+
+    // Wait for all retries to complete (3 attempts × 50ms delay)
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+
+    // Should have been called 3 times (initial + 2 retries)
+    expect(postMessageSpy.mock.calls.length).toBe(3);
+
+    sm.dispose();
+  });
+});
+
 // ─── Scrollback Replay on Re-creation ───────────────────────────────
 
 describe("TerminalViewProvider: scrollback replay on re-creation", () => {

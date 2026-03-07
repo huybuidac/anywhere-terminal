@@ -1,10 +1,25 @@
 import * as vscode from "vscode";
 import { TerminalEditorProvider } from "./providers/TerminalEditorProvider";
 import { TerminalViewProvider } from "./providers/TerminalViewProvider";
+import { loadNodePty } from "./pty/PtyManager";
 import { SessionManager } from "./session/SessionManager";
 import { affectsTerminalConfig, readTerminalConfig, readTerminalSettings } from "./settings/SettingsReader";
+import { PtyLoadError } from "./types/errors";
 
 export function activate(context: vscode.ExtensionContext) {
+  // Validate node-pty availability early — show user-facing error if missing
+  try {
+    loadNodePty();
+  } catch (err) {
+    if (err instanceof PtyLoadError) {
+      vscode.window.showErrorMessage(
+        `AnyWhere Terminal: Failed to load node-pty. Requires VS Code >= 1.109.0. ${err.message}`,
+      );
+    } else {
+      console.error("[AnyWhere Terminal] Unexpected error loading node-pty:", err);
+    }
+    // Continue activation — individual createSession calls will fail gracefully
+  }
   // Create shared SessionManager (singleton)
   const sessionManager = new SessionManager();
 
@@ -72,17 +87,26 @@ export function activate(context: vscode.ExtensionContext) {
     }
     const viewId = provider.getViewId();
     const settings = readTerminalSettings();
-    const newSessionId = sessionManager.createSession(viewId, view.webview, {
-      shell: settings.shell,
-      shellArgs: settings.shellArgs,
-      cwd: settings.cwd,
-    });
-    const newSession = sessionManager.getSession(newSessionId);
-    if (newSession) {
+    try {
+      const newSessionId = sessionManager.createSession(viewId, view.webview, {
+        shell: settings.shell,
+        shellArgs: settings.shellArgs,
+        cwd: settings.cwd,
+      });
+      const newSession = sessionManager.getSession(newSessionId);
+      if (newSession) {
+        safePostMessage(view.webview, {
+          type: "tabCreated",
+          tabId: newSessionId,
+          name: newSession.name,
+        });
+      }
+    } catch (err) {
+      console.error("[AnyWhere Terminal] Failed to create terminal:", err);
       safePostMessage(view.webview, {
-        type: "tabCreated",
-        tabId: newSessionId,
-        name: newSession.name,
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to create new terminal",
+        severity: "error",
       });
     }
   };

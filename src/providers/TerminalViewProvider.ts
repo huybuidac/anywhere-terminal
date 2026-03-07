@@ -153,17 +153,26 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         case "createTab": {
           const viewId = this.getViewId();
           const settings = readTerminalSettings();
-          const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, {
-            shell: settings.shell,
-            shellArgs: settings.shellArgs,
-            cwd: settings.cwd,
-          });
-          const newSession = this.sessionManager.getSession(newSessionId);
-          if (newSession) {
-            this.safePostMessage(webviewView.webview, {
-              type: "tabCreated",
-              tabId: newSessionId,
-              name: newSession.name,
+          try {
+            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, {
+              shell: settings.shell,
+              shellArgs: settings.shellArgs,
+              cwd: settings.cwd,
+            });
+            const newSession = this.sessionManager.getSession(newSessionId);
+            if (newSession) {
+              void this.safeSendWithRetry(webviewView.webview, {
+                type: "tabCreated",
+                tabId: newSessionId,
+                name: newSession.name,
+              });
+            }
+          } catch (err) {
+            console.error("[AnyWhere Terminal] Failed to create tab:", err);
+            void this.safeSendWithRetry(webviewView.webview, {
+              type: "error",
+              message: err instanceof Error ? err.message : "Failed to create new terminal tab",
+              severity: "error",
             });
           }
           break;
@@ -199,20 +208,29 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
             const splitMsg = message as { direction: "horizontal" | "vertical"; sourcePaneId: string };
             const viewId = this.getViewId();
             const splitSettings = readTerminalSettings();
-            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, {
-              isSplitPane: true,
-              shell: splitSettings.shell,
-              shellArgs: splitSettings.shellArgs,
-              cwd: splitSettings.cwd,
-            });
-            const newSession = this.sessionManager.getSession(newSessionId);
-            if (newSession) {
-              this.safePostMessage(webviewView.webview, {
-                type: "splitPaneCreated",
-                sourcePaneId: splitMsg.sourcePaneId,
-                newSessionId,
-                newSessionName: newSession.name,
-                direction: splitMsg.direction,
+            try {
+              const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, {
+                isSplitPane: true,
+                shell: splitSettings.shell,
+                shellArgs: splitSettings.shellArgs,
+                cwd: splitSettings.cwd,
+              });
+              const newSession = this.sessionManager.getSession(newSessionId);
+              if (newSession) {
+                void this.safeSendWithRetry(webviewView.webview, {
+                  type: "splitPaneCreated",
+                  sourcePaneId: splitMsg.sourcePaneId,
+                  newSessionId,
+                  newSessionName: newSession.name,
+                  direction: splitMsg.direction,
+                });
+              }
+            } catch (err) {
+              console.error("[AnyWhere Terminal] Failed to create split session:", err);
+              void this.safeSendWithRetry(webviewView.webview, {
+                type: "error",
+                message: err instanceof Error ? err.message : "Failed to create split terminal",
+                severity: "error",
               });
             }
           }
@@ -258,8 +276,8 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         // Update webview references for all existing sessions
         this.sessionManager.updateWebviewForView(viewId, webviewView.webview);
 
-        // Send 'init' message with existing tabs
-        this.safePostMessage(webviewView.webview, {
+        // Send 'init' message with existing tabs (with retry for transient failures)
+        void this.safeSendWithRetry(webviewView.webview, {
           type: "init",
           tabs: existingTabs,
           config: readTerminalConfig(),
@@ -291,18 +309,18 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
         // Get tabs for the init message
         const tabs = this.sessionManager.getTabsForView(viewId);
 
-        // Send 'init' message to the webview with resolved config
-        this.safePostMessage(webviewView.webview, {
+        // Send 'init' message to the webview with resolved config (with retry)
+        void this.safeSendWithRetry(webviewView.webview, {
           type: "init",
           tabs,
           config: readTerminalConfig(),
         });
       }
     } catch (err) {
-      // Spawn failure: send error message
+      // Spawn failure: send error message (with retry for transient failures)
       console.error("[AnyWhere Terminal] Failed to initialize terminal:", err);
 
-      this.safePostMessage(webviewView.webview, {
+      void this.safeSendWithRetry(webviewView.webview, {
         type: "error",
         message: err instanceof Error ? err.message : "Failed to initialize terminal",
         severity: "error",
@@ -322,6 +340,30 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     } catch {
       // Sync throw — webview may be disposed
     }
+  }
+
+  /**
+   * Post a message with retry logic for transient postMessage failures.
+   * Retries up to `maxRetries` times with a 50ms delay between attempts.
+   * Returns true if the message was delivered, false if all attempts failed.
+   * Used for critical messages (init, tabCreated, splitPaneCreated, error).
+   */
+  private async safeSendWithRetry(webview: vscode.Webview, message: unknown, maxRetries = 2): Promise<boolean> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await (webview.postMessage(message) as Thenable<boolean>);
+        if (result) {
+          return true;
+        }
+      } catch {
+        // Sync or async failure — will retry
+      }
+      // Wait before retrying (skip delay on last attempt)
+      if (attempt < maxRetries) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 50));
+      }
+    }
+    return false;
   }
 
   /**

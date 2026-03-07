@@ -217,6 +217,56 @@ describe("renderTabBar", () => {
     expect(tabs.length).toBe(0);
     expect(deps.tabBarEl.classList.contains("visible")).toBe(false);
   });
+
+  // ─── Exited State ──────────────────────────────────────────────────
+
+  it("applies tab-exited class when exited is true", () => {
+    const terminals = new Map<string, { name: string; exited?: boolean }>([
+      ["tab-1", { name: "Terminal 1", exited: true }],
+      ["tab-2", { name: "Terminal 2" }],
+    ]);
+    const deps = createMockDeps({ terminals: terminals as never, activeTabId: "tab-1" });
+    renderTabBar(deps);
+    const tabs = deps.tabBarEl.querySelectorAll(".tab-item");
+    expect(tabs[0].classList.contains("tab-exited")).toBe(true);
+    expect(tabs[1].classList.contains("tab-exited")).toBe(false);
+  });
+
+  it("shows '(exited)' suffix in tab name when exited is true", () => {
+    const terminals = new Map<string, { name: string; exited?: boolean }>([
+      ["tab-1", { name: "zsh", exited: true }],
+      ["tab-2", { name: "Terminal 2" }],
+    ]);
+    const deps = createMockDeps({ terminals: terminals as never, activeTabId: "tab-1" });
+    renderTabBar(deps);
+    const tabs = deps.tabBarEl.querySelectorAll(".tab-item");
+    expect(tabs[0].querySelector(".tab-name")?.textContent).toBe("zsh (exited)");
+    expect(tabs[1].querySelector(".tab-name")?.textContent).toBe("Terminal 2");
+  });
+
+  it("does not apply tab-exited class when exited is false or undefined", () => {
+    const terminals = new Map<string, { name: string; exited?: boolean }>([
+      ["tab-1", { name: "Terminal 1", exited: false }],
+      ["tab-2", { name: "Terminal 2" }],
+    ]);
+    const deps = createMockDeps({ terminals: terminals as never, activeTabId: "tab-1" });
+    renderTabBar(deps);
+    const tabs = deps.tabBarEl.querySelectorAll(".tab-item");
+    expect(tabs[0].classList.contains("tab-exited")).toBe(false);
+    expect(tabs[1].classList.contains("tab-exited")).toBe(false);
+  });
+
+  it("renders updated tab names from OSC title changes", () => {
+    const terminals = new Map<string, { name: string }>([
+      ["tab-1", { name: "user@host:~/dir" }],
+      ["tab-2", { name: "node index.js" }],
+    ]);
+    const deps = createMockDeps({ terminals: terminals as never, activeTabId: "tab-1" });
+    renderTabBar(deps);
+    const tabs = deps.tabBarEl.querySelectorAll(".tab-item");
+    expect(tabs[0].querySelector(".tab-name")?.textContent).toBe("user@host:~/dir");
+    expect(tabs[1].querySelector(".tab-name")?.textContent).toBe("node index.js");
+  });
 });
 
 // ─── handleTabKeyboardShortcut ──────────────────────────────────────

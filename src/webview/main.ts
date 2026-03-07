@@ -545,6 +545,50 @@ function startThemeWatcher(): void {
   });
 }
 
+// ─── Error Banner ───────────────────────────────────────────────────
+
+/** Auto-dismiss timeout for info-severity banners (ms). */
+const INFO_BANNER_DISMISS_MS = 5000;
+
+/**
+ * Display an error/warning/info banner in the terminal container.
+ * Severity determines the background color: error=red, warn=amber, info=blue.
+ * Info banners auto-dismiss after 5 seconds. All banners have a dismiss button.
+ */
+function showErrorBanner(message: string, severity: "error" | "warn" | "info"): void {
+  const containerEl = document.getElementById("terminal-container");
+  if (!containerEl) {
+    return;
+  }
+
+  const banner = document.createElement("div");
+  banner.className = `error-banner error-banner-${severity}`;
+
+  const messageSpan = document.createElement("span");
+  messageSpan.className = "error-banner-message";
+  messageSpan.textContent = message;
+  banner.appendChild(messageSpan);
+
+  const dismissBtn = document.createElement("button");
+  dismissBtn.className = "error-banner-dismiss";
+  dismissBtn.textContent = "\u00d7"; // ×
+  dismissBtn.addEventListener("click", () => {
+    banner.remove();
+  });
+  banner.appendChild(dismissBtn);
+
+  containerEl.insertBefore(banner, containerEl.firstChild);
+
+  // Auto-dismiss info banners after 5 seconds
+  if (severity === "info") {
+    setTimeout(() => {
+      if (banner.parentElement) {
+        banner.remove();
+      }
+    }, INFO_BANNER_DISMISS_MS);
+  }
+}
+
 // ─── Input Handler ──────────────────────────────────────────────────
 
 /** Build a ClipboardProvider from the browser's navigator.clipboard API. */
@@ -793,6 +837,15 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
 
   terminals.set(id, instance);
 
+  // Listen for OSC title change events (e.g., shell sets window title via \e]0;title\a)
+  // Updates the tab name dynamically to reflect the current process name.
+  terminal.onTitleChange((newTitle: string) => {
+    if (newTitle) {
+      instance.name = newTitle;
+      updateTabBar();
+    }
+  });
+
   // Initialize split layout for this tab (single leaf)
   if (!tabLayouts.has(id)) {
     tabLayouts.set(id, createLeaf(id));
@@ -981,19 +1034,22 @@ function updateTabBar(): void {
 
   // Build a filtered terminals map: only include "root" tabs (those with a tabLayout entry)
   // For split tabs, use the active pane's name
-  const tabTerminals = new Map<string, { name: string }>();
+  const tabTerminals = new Map<string, { name: string; exited?: boolean }>();
   for (const [tabId, layout] of tabLayouts) {
     if (layout.type === "branch") {
-      // Split tab — show active pane's name
+      // Split tab — show active pane's name and exited state
       const activePaneId = tabActivePaneIds.get(tabId) ?? tabId;
       const activeInstance = terminals.get(activePaneId);
       const rootInstance = terminals.get(tabId);
-      tabTerminals.set(tabId, { name: activeInstance?.name ?? rootInstance?.name ?? tabId });
+      tabTerminals.set(tabId, {
+        name: activeInstance?.name ?? rootInstance?.name ?? tabId,
+        exited: (activeInstance ?? rootInstance)?.exited,
+      });
     } else {
       // Single pane tab
       const instance = terminals.get(tabId);
       if (instance) {
-        tabTerminals.set(tabId, { name: instance.name });
+        tabTerminals.set(tabId, { name: instance.name, exited: instance.exited });
       }
     }
   }
@@ -1100,6 +1156,7 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
       if (instance) {
         instance.exited = true;
         instance.terminal.write(`\r\n\x1b[90m[Process exited with code ${msg.code}]\x1b[0m\r\n`);
+        updateTabBar();
       }
       break;
     }
@@ -1262,6 +1319,7 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
 
     case "error":
       console.error(`[AnyWhere Terminal] ${msg.severity}: ${msg.message}`);
+      showErrorBanner(msg.message, msg.severity);
       break;
 
     default:
