@@ -234,24 +234,10 @@ export interface SplitPaneAtMessage {
   sourcePaneId: string;
 }
 
-/** Context menu: copy selection to clipboard. */
-export interface CtxCopyMessage {
-  type: "ctxCopy";
-}
-
-/** Context menu: paste from clipboard. */
-export interface CtxPasteMessage {
-  type: "ctxPaste";
-}
-
-/** Context menu: select all terminal content. */
-export interface CtxSelectAllMessage {
-  type: "ctxSelectAll";
-}
-
-/** Context menu: clear terminal. */
+/** Context menu: clear terminal viewport and scrollback for a specific session. */
 export interface CtxClearMessage {
   type: "ctxClear";
+  sessionId?: string;
 }
 
 /**
@@ -273,7 +259,4 @@ export type ExtensionToWebViewMessage =
   | CloseSplitPaneMessage
   | CloseSplitPaneByIdMessage
   | SplitPaneAtMessage
-  | CtxCopyMessage
-  | CtxPasteMessage
-  | CtxSelectAllMessage
   | CtxClearMessage;

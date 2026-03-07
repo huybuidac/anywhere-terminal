@@ -12,8 +12,11 @@
   overflow: hidden;
 }
 
-/* Leaf container — holds a single xterm.js terminal */
+/* Leaf container — holds a single xterm.js terminal.
+ * flex: 1 ensures a lone leaf fills its parent (e.g. after closing a split pane).
+ * When inside a split-branch, the inline flex style from renderSplitTree overrides this. */
 .split-leaf {
+  flex: 1;
   overflow: hidden;
   position: relative;
   min-width: 0;

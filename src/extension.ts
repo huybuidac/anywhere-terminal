@@ -183,56 +183,91 @@ export function activate(context: vscode.ExtensionContext) {
   // These are triggered from right-click on split panes via webview/context menus.
   // VS Code passes the data-vscode-context values as the command argument.
 
-  /** Post a message to whichever provider's webview is visible. */
-  const postToVisibleWebview = (message: unknown): void => {
-    // Try both providers — only the one whose webview contains the element will match
+  /**
+   * Find the provider that owns a given session ID.
+   * Context menu commands receive paneSessionId from data-vscode-context;
+   * use it to target the correct provider instead of getFocusedProvider().
+   */
+  const getProviderBySessionId = (sessionId: string): TerminalViewProvider | undefined => {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) {
+      return undefined;
+    }
     for (const provider of [sidebarProvider, panelProvider]) {
-      const view = provider.view;
-      if (view?.visible) {
-        safePostMessage(view.webview, message);
+      if (provider.getViewId() === session.viewId) {
+        return provider;
       }
+    }
+    return undefined;
+  };
+
+  /**
+   * Resolve the correct provider for a context menu command.
+   * Prefers the provider owning the right-clicked session (paneSessionId),
+   * falls back to getFocusedProvider() when context is unavailable.
+   */
+  const getCtxProvider = (ctx?: { paneSessionId?: string }): TerminalViewProvider => {
+    if (ctx?.paneSessionId) {
+      const provider = getProviderBySessionId(ctx.paneSessionId);
+      if (provider) {
+        return provider;
+      }
+    }
+    return getFocusedProvider();
+  };
+
+  /** Post a message to the correct provider's webview based on context. */
+  const postToCtxWebview = (ctx: { paneSessionId?: string } | undefined, message: unknown): void => {
+    const provider = getCtxProvider(ctx);
+    const view = provider.view;
+    if (view) {
+      safePostMessage(view.webview, message);
     }
   };
 
   context.subscriptions.push(
     vscode.commands.registerCommand("anywhereTerminal.ctx.closePane", (ctx: { paneSessionId?: string }) => {
       if (ctx?.paneSessionId) {
-        postToVisibleWebview({ type: "closeSplitPaneById", sessionId: ctx.paneSessionId });
+        postToCtxWebview(ctx, { type: "closeSplitPaneById", sessionId: ctx.paneSessionId });
       }
     }),
     vscode.commands.registerCommand("anywhereTerminal.ctx.splitVertical", (ctx: { paneSessionId?: string }) => {
       if (ctx?.paneSessionId) {
-        postToVisibleWebview({ type: "splitPaneAt", direction: "vertical", sourcePaneId: ctx.paneSessionId });
+        postToCtxWebview(ctx, { type: "splitPaneAt", direction: "vertical", sourcePaneId: ctx.paneSessionId });
       }
     }),
     vscode.commands.registerCommand("anywhereTerminal.ctx.splitHorizontal", (ctx: { paneSessionId?: string }) => {
       if (ctx?.paneSessionId) {
-        postToVisibleWebview({ type: "splitPaneAt", direction: "horizontal", sourcePaneId: ctx.paneSessionId });
+        postToCtxWebview(ctx, { type: "splitPaneAt", direction: "horizontal", sourcePaneId: ctx.paneSessionId });
       }
     }),
-    vscode.commands.registerCommand("anywhereTerminal.ctx.copy", () => {
-      postToVisibleWebview({ type: "ctxCopy" });
-    }),
-    vscode.commands.registerCommand("anywhereTerminal.ctx.paste", () => {
-      postToVisibleWebview({ type: "ctxPaste" });
-    }),
-    vscode.commands.registerCommand("anywhereTerminal.ctx.selectAll", () => {
-      postToVisibleWebview({ type: "ctxSelectAll" });
-    }),
-    vscode.commands.registerCommand("anywhereTerminal.ctx.clearTerminal", () => {
+    vscode.commands.registerCommand("anywhereTerminal.ctx.clearTerminal", (ctx?: { paneSessionId?: string }) => {
       // Clear scrollback on extension side, then tell webview to clear viewport
-      const provider = getFocusedProvider();
-      const activeSessionId = provider.getActiveSessionId();
-      if (activeSessionId) {
-        sessionManager.clearScrollback(activeSessionId);
+      const provider = getCtxProvider(ctx);
+      // Use the right-clicked pane's session if available, otherwise fall back to active session
+      const sessionId = ctx?.paneSessionId ?? provider.getActiveSessionId();
+      if (sessionId) {
+        sessionManager.clearScrollback(sessionId);
       }
-      postToVisibleWebview({ type: "ctxClear" });
+      const view = provider.view;
+      if (view) {
+        safePostMessage(view.webview, { type: "ctxClear", sessionId });
+      }
     }),
-    vscode.commands.registerCommand("anywhereTerminal.ctx.newTerminal", () => {
-      doNewTerminal(getFocusedProvider());
+    vscode.commands.registerCommand("anywhereTerminal.ctx.newTerminal", (ctx?: { paneSessionId?: string }) => {
+      doNewTerminal(getCtxProvider(ctx));
     }),
-    vscode.commands.registerCommand("anywhereTerminal.ctx.killTerminal", () => {
-      doKillTerminal(getFocusedProvider());
+    vscode.commands.registerCommand("anywhereTerminal.ctx.killTerminal", (ctx?: { paneSessionId?: string }) => {
+      const provider = getCtxProvider(ctx);
+      const sessionId = ctx?.paneSessionId ?? provider.getActiveSessionId();
+      if (!sessionId) {
+        return;
+      }
+      sessionManager.destroySession(sessionId);
+      const view = provider.view;
+      if (view) {
+        safePostMessage(view.webview, { type: "tabRemoved", tabId: sessionId });
+      }
     }),
   );
 

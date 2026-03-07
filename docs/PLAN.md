@@ -272,16 +272,16 @@ Make AnyWhere Terminal feel **native** to VS Code - matching themes, respecting 
 ### Tasks
 
 #### 3.1 Advanced Theme Integration (~3h)
-- [ ] _(Basic CSS variable reading + MutationObserver already done in Phase 1 task 1.6a)_
-- [ ] Location-aware background: detect if terminal is in sidebar vs panel vs editor, adjust background accordingly
-- [ ] Read font from VS Code variables:
+- [x] _(Basic CSS variable reading + MutationObserver already done in Phase 1 task 1.6a)_
+- [x] Location-aware background: detect if terminal is in sidebar vs panel vs editor, adjust background accordingly
+- [x] Read font from VS Code variables:
   - `--vscode-editor-font-family`
   - `--vscode-editor-font-size`
-- [ ] High-contrast theme support
-- [ ] Test with multiple VS Code themes (Dark+, Light+, Monokai, Solarized, etc.)
+- [x] High-contrast theme support
+- [x] Test with multiple VS Code themes (Dark+, Light+, Monokai, Solarized, etc.)
 
 #### 3.2 Extension Settings (~3h)
-- [ ] Define `contributes.configuration` in `package.json`:
+- [x] Define `contributes.configuration` in `package.json`:
   ```json
   {
     "anywhereTerminal.shell.macOS": { "type": "string", "default": "" },
@@ -292,35 +292,35 @@ Make AnyWhere Terminal feel **native** to VS Code - matching themes, respecting 
     "anywhereTerminal.defaultCwd": { "type": "string", "default": "" }
   }
   ```
-- [ ] Read settings via `workspace.getConfiguration('anywhereTerminal')`
-- [ ] Listen for setting changes: `workspace.onDidChangeConfiguration`
-- [ ] Apply setting changes to active sessions
+- [x] Read settings via `workspace.getConfiguration('anywhereTerminal')`
+- [x] Listen for setting changes: `workspace.onDidChangeConfiguration`
+- [x] Apply setting changes to active sessions
 
 #### 3.3 Performance Optimization (~3h)
-- [ ] _(Base 8ms buffering + flow control already done in Phase 1 task 1.6)_
-- [ ] Evaluate adaptive output buffering:
+- [x] _(Base 8ms buffering + flow control already done in Phase 1 task 1.6)_
+- [x] Evaluate adaptive output buffering:
   - Consider dynamic interval adjustment based on output throughput
   - Monitor and tune high/low watermark values based on real-world usage
-- [ ] Consider WebGL renderer addon (`@xterm/addon-webgl`):
+- [x] Consider WebGL renderer addon (`@xterm/addon-webgl`):
   - DOM renderer first → WebGL upgrade attempt → DOM fallback if WebGL fails
   - Static class variable remembers WebGL failure across instances
   - Evaluate if WebGL works in VS Code webview context
-- [ ] Profile memory usage per terminal instance
-- [ ] Add output buffer size limits with overflow handling
+- [x] Profile memory usage per terminal instance
+- [x] Add output buffer size limits with overflow handling
 
 #### 3.4 Advanced Keyboard Handling (~3h)
-- [ ] Implement comprehensive `attachCustomKeyEventHandler`:
+- [x] Implement comprehensive `attachCustomKeyEventHandler`:
   - Cmd+C: copy/SIGINT logic
   - Cmd+V: paste
   - Cmd+K: clear terminal
   - Cmd+A: select all (if supported)
   - Ctrl+Tab: switch terminal tab
   - Escape: deselect / pass to shell
-- [ ] Ensure VS Code shortcuts not consumed by terminal propagate correctly
-- [ ] Test with modifier keys on macOS (Cmd, Ctrl, Option, Shift)
+- [x] Ensure VS Code shortcuts not consumed by terminal propagate correctly
+- [x] Test with modifier keys on macOS (Cmd, Ctrl, Option, Shift)
 
 #### 3.5 Context Menu (~2h)
-- [ ] Implement right-click context menu in webview:
+- [x] Implement right-click context menu in webview:
   - Copy
   - Paste
   - Select All
@@ -330,15 +330,15 @@ Make AnyWhere Terminal feel **native** to VS Code - matching themes, respecting 
   - Kill Terminal
 
 #### 3.6 Status & Feedback (~2h)
-- [ ] Show terminal process name in tab title (e.g., "zsh", "node", "python")
-- [ ] Show exit code when process exits: `[Process exited with code 0]`
-- [ ] Visual indicator for active/running vs exited terminals
+- [x] Show terminal process name in tab title (e.g., "zsh", "node", "python")
+- [x] Show exit code when process exits: `[Process exited with code 0]`
+- [x] Visual indicator for active/running vs exited terminals
 
 #### 3.7 Error Handling (~2h)
-- [ ] Handle PTY spawn failure gracefully (show error in webview)
-- [ ] Handle node-pty not found (VS Code version incompatibility)
-- [ ] Handle shell not found (invalid shell path)
-- [ ] Retry mechanism for transient failures
+- [x] Handle PTY spawn failure gracefully (show error in webview)
+- [x] Handle node-pty not found (VS Code version incompatibility)
+- [x] Handle shell not found (invalid shell path)
+- [x] Retry mechanism for transient failures
 
 #### 3.8 Testing (~3h)
 - [ ] Test with multiple VS Code themes (Dark+, Light+, Monokai, etc.)

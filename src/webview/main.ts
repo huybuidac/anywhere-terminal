@@ -17,7 +17,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import type { ExtensionToWebViewMessage, InitMessage, TerminalConfig } from "../types/messages";
-import { type ClipboardProvider, createKeyEventHandler, handlePaste } from "./InputHandler";
+import { type ClipboardProvider, createKeyEventHandler } from "./InputHandler";
 import { renderSplitTree } from "./SplitContainer";
 import {
   createBranch,
@@ -355,7 +355,7 @@ function showTabContainer(tabId: string): void {
   }
   const tabContainer = containerEl.querySelector(`[data-tab-id="${tabId}"]`) as HTMLDivElement | null;
   if (tabContainer) {
-    tabContainer.style.display = "block";
+    tabContainer.style.display = "flex";
   }
 }
 
@@ -407,7 +407,7 @@ function debouncedFitAllLeaves(tabId: string): void {
     for (const sessionId of sessionIds) {
       const instance = terminals.get(sessionId);
       if (instance) {
-        instance.fitAddon.fit();
+        fitTerminal(instance);
       }
     }
   }, RESIZE_DEBOUNCE_MS);
@@ -648,33 +648,96 @@ function ackChars(count: number): void {
 // ─── Resize Handler ─────────────────────────────────────────────────
 
 /**
+ * Fit a single terminal to its container using getBoundingClientRect().
+ *
+ * FitAddon uses getComputedStyle(parentElement) which can return stale values
+ * during CSS flex layout transitions (e.g., sidebar expand). This custom
+ * implementation uses getBoundingClientRect() which returns actual rendered
+ * pixel dimensions, matching VS Code's own approach.
+ *
+ * See: microsoft/vscode xtermTerminal.ts — getXtermScaledDimensions()
+ */
+function fitTerminal(instance: TerminalInstance): void {
+  if (!instance.terminal.element?.parentElement) {
+    return;
+  }
+
+  const core = (instance.terminal as any)._core;
+  const dims = core?._renderService?.dimensions;
+  if (!dims || dims.css.cell.width === 0 || dims.css.cell.height === 0) {
+    return;
+  }
+
+  // Use getBoundingClientRect for actual rendered dimensions (not stale getComputedStyle)
+  const parentRect = instance.terminal.element.parentElement.getBoundingClientRect();
+  if (parentRect.width === 0 || parentRect.height === 0) {
+    return;
+  }
+
+  // Account for xterm element padding
+  const xtermStyle = window.getComputedStyle(instance.terminal.element);
+  const paddingTop = Number.parseInt(xtermStyle.getPropertyValue("padding-top"), 10) || 0;
+  const paddingBottom = Number.parseInt(xtermStyle.getPropertyValue("padding-bottom"), 10) || 0;
+  const paddingLeft = Number.parseInt(xtermStyle.getPropertyValue("padding-left"), 10) || 0;
+  const paddingRight = Number.parseInt(xtermStyle.getPropertyValue("padding-right"), 10) || 0;
+
+  // Scrollbar width: same logic as FitAddon — scrollback=0 → 0, else overviewRuler.width || 14
+  const scrollbarWidth = instance.terminal.options.scrollback === 0 ? 0 : instance.terminal.options.overviewRuler?.width || 14;
+
+  const availableHeight = parentRect.height - paddingTop - paddingBottom;
+  const availableWidth = parentRect.width - paddingLeft - paddingRight - scrollbarWidth;
+
+  const cols = Math.max(2, Math.floor(availableWidth / dims.css.cell.width));
+  const rows = Math.max(1, Math.floor(availableHeight / dims.css.cell.height));
+
+  // Only resize if dimensions actually changed
+  if (instance.terminal.rows === rows && instance.terminal.cols === cols) {
+    return;
+  }
+
+  core._renderService.clear();
+  instance.terminal.resize(cols, rows);
+}
+
+/**
  * Debounced fit: resets timer on each call, fits after RESIZE_DEBOUNCE_MS quiet period.
  * Fits all leaf terminals in the active tab's split tree.
+ * Uses requestAnimationFrame to ensure the browser has computed new layout dimensions.
  */
 function debouncedFit(): void {
   clearTimeout(resizeTimeout);
   resizeTimeout = window.setTimeout(() => {
-    if (!activeTabId) {
-      return;
-    }
-    const layout = tabLayouts.get(activeTabId);
-    if (layout) {
-      // Fit all leaves in the split tree
-      const sessionIds = getAllSessionIds(layout);
-      for (const sessionId of sessionIds) {
-        const instance = terminals.get(sessionId);
-        if (instance) {
-          instance.fitAddon.fit();
-        }
-      }
-    } else {
-      // Fallback: fit single terminal
-      const instance = terminals.get(activeTabId);
-      if (instance) {
-        instance.fitAddon.fit();
-      }
-    }
+    requestAnimationFrame(() => {
+      fitAllTerminals();
+    });
   }, RESIZE_DEBOUNCE_MS);
+}
+
+/**
+ * Immediately fit all visible terminals in the active tab.
+ * Extracted for reuse by debouncedFit and window resize handler.
+ */
+function fitAllTerminals(): void {
+  if (!activeTabId) {
+    return;
+  }
+  const layout = tabLayouts.get(activeTabId);
+  if (layout) {
+    // Fit all leaves in the split tree
+    const sessionIds = getAllSessionIds(layout);
+    for (const sessionId of sessionIds) {
+      const instance = terminals.get(sessionId);
+      if (instance) {
+        fitTerminal(instance);
+      }
+    }
+  } else {
+    // Fallback: fit single terminal
+    const instance = terminals.get(activeTabId);
+    if (instance) {
+      fitTerminal(instance);
+    }
+  }
 }
 
 /**
@@ -722,13 +785,13 @@ function onViewShow(): void {
         for (const sessionId of sessionIds) {
           const instance = terminals.get(sessionId);
           if (instance) {
-            instance.fitAddon.fit();
+            fitTerminal(instance);
           }
         }
       } else {
         const instance = terminals.get(activeTabId);
         if (instance) {
-          instance.fitAddon.fit();
+          fitTerminal(instance);
         }
       }
     });
@@ -863,7 +926,7 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
     if (!terminals.has(id)) {
       return;
     }
-    fitAddon.fit();
+    fitTerminal(instance);
     if (isActive) {
       terminal.focus();
     }
@@ -905,7 +968,7 @@ function switchTab(newTabId: string): void {
   if (containerEl) {
     const newTabContainer = containerEl.querySelector(`[data-tab-id="${newTabId}"]`) as HTMLDivElement | null;
     if (newTabContainer) {
-      newTabContainer.style.display = "block";
+      newTabContainer.style.display = "flex";
     } else {
       next.container.style.display = "block";
     }
@@ -926,11 +989,11 @@ function switchTab(newTabId: string): void {
       for (const sessionId of sessionIds) {
         const instance = terminals.get(sessionId);
         if (instance) {
-          instance.fitAddon.fit();
+          fitTerminal(instance);
         }
       }
     } else {
-      next.fitAddon.fit();
+      fitTerminal(next);
     }
     // Focus the active pane's terminal
     const activePaneId = tabActivePaneIds.get(newTabId) ?? newTabId;
@@ -1111,7 +1174,7 @@ function applyConfig(config: Partial<TerminalConfig>): void {
 
     // Refit after font changes (affects cell dimensions)
     if (needsRefit) {
-      instance.fitAddon.fit();
+      fitTerminal(instance);
     }
   }
 }
@@ -1277,40 +1340,10 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
       break;
     }
 
-    case "ctxCopy": {
-      const instance = getActivePaneTerminal();
-      if (instance?.terminal.hasSelection()) {
-        const selection = instance.terminal.getSelection();
-        if (selection) {
-          const clipboard = getClipboardProvider();
-          if (clipboard) {
-            clipboard.writeText(selection).catch((err) => {
-              console.warn("[AnyWhere Terminal] Clipboard write failed:", err);
-            });
-          }
-        }
-      }
-      break;
-    }
-
-    case "ctxPaste": {
-      const instance = getActivePaneTerminal();
-      if (instance) {
-        handlePaste(instance.terminal, getClipboardProvider());
-      }
-      break;
-    }
-
-    case "ctxSelectAll": {
-      const instance = getActivePaneTerminal();
-      if (instance) {
-        instance.terminal.selectAll();
-      }
-      break;
-    }
-
     case "ctxClear": {
-      const instance = getActivePaneTerminal();
+      // Use the specific session ID if provided (from context menu), otherwise fall back to active pane
+      const targetId = msg.sessionId;
+      const instance = targetId ? terminals.get(targetId) : getActivePaneTerminal();
       if (instance) {
         instance.terminal.clear();
       }
@@ -1415,6 +1448,12 @@ function bootstrap(): void {
       return;
     }
     handleMessage(msg as ExtensionToWebViewMessage);
+  });
+
+  // Backup resize listener — ResizeObserver may not fire reliably in all VS Code
+  // webview scenarios (e.g., sidebar expand). The window resize event catches these.
+  window.addEventListener("resize", () => {
+    debouncedFit();
   });
 
   // Start theme change watcher
