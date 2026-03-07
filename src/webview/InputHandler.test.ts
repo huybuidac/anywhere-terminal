@@ -309,6 +309,45 @@ describe("createKeyEventHandler", () => {
     });
   });
 
+  // ─── Escape Key ──────────────────────────────────────────────────
+
+  describe("Escape key (clear selection)", () => {
+    it("clears selection and returns false when text is selected", () => {
+      const terminal = createMockTerminal();
+      vi.mocked(terminal.hasSelection).mockReturnValue(true);
+      const deps = createDeps({ terminal });
+      const handler = createKeyEventHandler(deps);
+
+      const result = handler(makeKeyEvent({ key: "Escape" }));
+
+      expect(result).toBe(false);
+      expect(terminal.clearSelection).toHaveBeenCalled();
+    });
+
+    it("returns true (passes through to shell) when no selection", () => {
+      const terminal = createMockTerminal();
+      vi.mocked(terminal.hasSelection).mockReturnValue(false);
+      const deps = createDeps({ terminal });
+      const handler = createKeyEventHandler(deps);
+
+      const result = handler(makeKeyEvent({ key: "Escape" }));
+
+      expect(result).toBe(true);
+      expect(terminal.clearSelection).not.toHaveBeenCalled();
+    });
+
+    it("returns true without checking selection during IME composition", () => {
+      const terminal = createMockTerminal();
+      const deps = createDeps({ terminal, getIsComposing: vi.fn(() => true) });
+      const handler = createKeyEventHandler(deps);
+
+      const result = handler(makeKeyEvent({ key: "Escape" }));
+
+      expect(result).toBe(true);
+      expect(terminal.hasSelection).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── Unknown Cmd combos ─────────────────────────────────────────
 
   describe("unknown Cmd+ combos", () => {

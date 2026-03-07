@@ -17,7 +17,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import type { ExtensionToWebViewMessage, InitMessage, TerminalConfig } from "../types/messages";
-import { type ClipboardProvider, createKeyEventHandler } from "./InputHandler";
+import { type ClipboardProvider, createKeyEventHandler, handlePaste } from "./InputHandler";
 import { renderSplitTree } from "./SplitContainer";
 import {
   createBranch,
@@ -1060,6 +1060,15 @@ function applyConfig(config: Partial<TerminalConfig>): void {
   }
 }
 
+/** Get the terminal instance for the active pane in the current tab. */
+function getActivePaneTerminal(): TerminalInstance | undefined {
+  if (!activeTabId) {
+    return undefined;
+  }
+  const activePaneId = tabActivePaneIds.get(activeTabId) ?? activeTabId;
+  return terminals.get(activePaneId);
+}
+
 // ─── Message Router ─────────────────────────────────────────────────
 
 /**
@@ -1207,6 +1216,46 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
           direction: msg.direction,
           sourcePaneId: msg.sourcePaneId,
         });
+      }
+      break;
+    }
+
+    case "ctxCopy": {
+      const instance = getActivePaneTerminal();
+      if (instance?.terminal.hasSelection()) {
+        const selection = instance.terminal.getSelection();
+        if (selection) {
+          const clipboard = getClipboardProvider();
+          if (clipboard) {
+            clipboard.writeText(selection).catch((err) => {
+              console.warn("[AnyWhere Terminal] Clipboard write failed:", err);
+            });
+          }
+        }
+      }
+      break;
+    }
+
+    case "ctxPaste": {
+      const instance = getActivePaneTerminal();
+      if (instance) {
+        handlePaste(instance.terminal, getClipboardProvider());
+      }
+      break;
+    }
+
+    case "ctxSelectAll": {
+      const instance = getActivePaneTerminal();
+      if (instance) {
+        instance.terminal.selectAll();
+      }
+      break;
+    }
+
+    case "ctxClear": {
+      const instance = getActivePaneTerminal();
+      if (instance) {
+        instance.terminal.clear();
       }
       break;
     }

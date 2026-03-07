@@ -234,6 +234,26 @@ export interface SplitPaneAtMessage {
   sourcePaneId: string;
 }
 
+/** Context menu: copy selection to clipboard. */
+export interface CtxCopyMessage {
+  type: "ctxCopy";
+}
+
+/** Context menu: paste from clipboard. */
+export interface CtxPasteMessage {
+  type: "ctxPaste";
+}
+
+/** Context menu: select all terminal content. */
+export interface CtxSelectAllMessage {
+  type: "ctxSelectAll";
+}
+
+/** Context menu: clear terminal. */
+export interface CtxClearMessage {
+  type: "ctxClear";
+}
+
 /**
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
@@ -252,4 +272,8 @@ export type ExtensionToWebViewMessage =
   | SplitPaneCreatedMessage
   | CloseSplitPaneMessage
   | CloseSplitPaneByIdMessage
-  | SplitPaneAtMessage;
+  | SplitPaneAtMessage
+  | CtxCopyMessage
+  | CtxPasteMessage
+  | CtxSelectAllMessage
+  | CtxClearMessage;

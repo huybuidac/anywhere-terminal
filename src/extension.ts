@@ -186,6 +186,30 @@ export function activate(context: vscode.ExtensionContext) {
         postToVisibleWebview({ type: "splitPaneAt", direction: "horizontal", sourcePaneId: ctx.paneSessionId });
       }
     }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.copy", () => {
+      postToVisibleWebview({ type: "ctxCopy" });
+    }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.paste", () => {
+      postToVisibleWebview({ type: "ctxPaste" });
+    }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.selectAll", () => {
+      postToVisibleWebview({ type: "ctxSelectAll" });
+    }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.clearTerminal", () => {
+      // Clear scrollback on extension side, then tell webview to clear viewport
+      const provider = getFocusedProvider();
+      const activeSessionId = provider.getActiveSessionId();
+      if (activeSessionId) {
+        sessionManager.clearScrollback(activeSessionId);
+      }
+      postToVisibleWebview({ type: "ctxClear" });
+    }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.newTerminal", () => {
+      doNewTerminal(getFocusedProvider());
+    }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.killTerminal", () => {
+      doKillTerminal(getFocusedProvider());
+    }),
   );
 
   // ─── Configuration Change Listener ────────────────────────────────

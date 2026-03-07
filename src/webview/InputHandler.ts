@@ -81,6 +81,15 @@ export function createKeyEventHandler(deps: KeyHandlerDeps): (event: KeyboardEve
       return true;
     }
 
+    // Escape key: clear selection if present, otherwise pass through to shell
+    if (event.key === "Escape") {
+      if (terminal.hasSelection()) {
+        terminal.clearSelection();
+        return false;
+      }
+      return true;
+    }
+
     // Check for platform modifier (Cmd on macOS, Ctrl on others)
     const modifier = isMac ? event.metaKey : event.ctrlKey;
 

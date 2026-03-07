@@ -205,6 +205,30 @@
         "icon": "media/split-vertical.svg"
       },
       {
+        "command": "anywhereTerminal.ctx.copy",
+        "title": "Copy"
+      },
+      {
+        "command": "anywhereTerminal.ctx.paste",
+        "title": "Paste"
+      },
+      {
+        "command": "anywhereTerminal.ctx.selectAll",
+        "title": "Select All"
+      },
+      {
+        "command": "anywhereTerminal.ctx.clearTerminal",
+        "title": "Clear Terminal"
+      },
+      {
+        "command": "anywhereTerminal.ctx.newTerminal",
+        "title": "New Terminal"
+      },
+      {
+        "command": "anywhereTerminal.ctx.killTerminal",
+        "title": "Kill Terminal"
+      },
+      {
         "command": "anywhereTerminal.ctx.closePane",
         "title": "Close Pane"
       },
@@ -262,22 +286,76 @@
       ],
       "webview/context": [
         {
-          "command": "anywhereTerminal.ctx.closePane",
+          "command": "anywhereTerminal.ctx.copy",
           "when": "webviewSection == 'splitPane'",
-          "group": "pane@1"
+          "group": "clipboard@1"
         },
         {
-          "command": "anywhereTerminal.ctx.splitVertical",
+          "command": "anywhereTerminal.ctx.paste",
+          "when": "webviewSection == 'splitPane'",
+          "group": "clipboard@2"
+        },
+        {
+          "command": "anywhereTerminal.ctx.selectAll",
+          "when": "webviewSection == 'splitPane'",
+          "group": "clipboard@3"
+        },
+        {
+          "command": "anywhereTerminal.ctx.clearTerminal",
+          "when": "webviewSection == 'splitPane'",
+          "group": "terminal@1"
+        },
+        {
+          "command": "anywhereTerminal.ctx.newTerminal",
+          "when": "webviewSection == 'splitPane'",
+          "group": "terminal@2"
+        },
+        {
+          "command": "anywhereTerminal.ctx.killTerminal",
+          "when": "webviewSection == 'splitPane'",
+          "group": "terminal@3"
+        },
+        {
+          "command": "anywhereTerminal.ctx.closePane",
           "when": "webviewSection == 'splitPane'",
           "group": "split@1"
         },
         {
-          "command": "anywhereTerminal.ctx.splitHorizontal",
+          "command": "anywhereTerminal.ctx.splitVertical",
           "when": "webviewSection == 'splitPane'",
           "group": "split@2"
+        },
+        {
+          "command": "anywhereTerminal.ctx.splitHorizontal",
+          "when": "webviewSection == 'splitPane'",
+          "group": "split@3"
         }
       ],
       "commandPalette": [
+        {
+          "command": "anywhereTerminal.ctx.copy",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.ctx.paste",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.ctx.selectAll",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.ctx.clearTerminal",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.ctx.newTerminal",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.ctx.killTerminal",
+          "when": "false"
+        },
         {
           "command": "anywhereTerminal.ctx.closePane",
           "when": "false"
