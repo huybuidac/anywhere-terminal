@@ -1150,10 +1150,23 @@ function handleInit(msg: InitMessage): void {
   // Store config for future tab creation
   currentConfig = { ...msg.config };
 
+  // Build set of valid tab IDs from the extension's SessionManager
+  const validTabIds = new Set(msg.tabs.map((t) => t.id));
+
   // Restore layout state from previous session (if available)
   const restoredLayouts = restoreLayoutState();
   for (const [tabId, layout] of restoredLayouts) {
-    tabLayouts.set(tabId, layout);
+    // Only restore layouts for tabs that still exist in SessionManager
+    if (validTabIds.has(tabId)) {
+      tabLayouts.set(tabId, layout);
+    }
+  }
+
+  // Prune active pane IDs for tabs that no longer exist
+  for (const tabId of tabActivePaneIds.keys()) {
+    if (!validTabIds.has(tabId)) {
+      tabActivePaneIds.delete(tabId);
+    }
   }
 
   // Create terminal instances for each tab
@@ -1166,6 +1179,9 @@ function handleInit(msg: InitMessage): void {
   if (containerEl) {
     setupResizeObserver(containerEl);
   }
+
+  // Persist cleaned-up state
+  persistLayoutState();
 
   // Render tab bar after all tabs are created
   updateTabBar();

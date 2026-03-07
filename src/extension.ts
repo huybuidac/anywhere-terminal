@@ -35,13 +35,28 @@ export function activate(context: vscode.ExtensionContext) {
 
   // ─── Terminal Commands ──────────────────────────────────────────
 
-  // Helper: get the focused provider (sidebar or panel). Defaults to sidebar.
+  // Track which provider last received user interaction (for correct split targeting)
+  let lastFocusedProvider: TerminalViewProvider = sidebarProvider;
+
+  sidebarProvider.onDidReceiveInteraction = () => {
+    lastFocusedProvider = sidebarProvider;
+  };
+  panelProvider.onDidReceiveInteraction = () => {
+    lastFocusedProvider = panelProvider;
+  };
+
+  // Helper: get the focused provider (sidebar or panel).
+  // Uses last-interaction tracking to correctly target the view the user is working in.
   const getFocusedProvider = (): TerminalViewProvider => {
-    // If panel view is visible and sidebar is not, use panel
+    // If only one view is visible, use that one
     if (panelProvider.view?.visible && !sidebarProvider.view?.visible) {
       return panelProvider;
     }
-    return sidebarProvider;
+    if (sidebarProvider.view?.visible && !panelProvider.view?.visible) {
+      return sidebarProvider;
+    }
+    // Both visible: use the last interacted provider
+    return lastFocusedProvider;
   };
 
   // newTerminal: create a new terminal tab in the focused view

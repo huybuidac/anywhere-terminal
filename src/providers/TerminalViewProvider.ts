@@ -22,9 +22,17 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
   /** Whether the webview has sent the 'ready' message. Gates outbound messages. */
   private _ready = false;
 
+  /** Callback fired when this provider receives user interaction (message from webview). */
+  private _onDidReceiveInteraction: (() => void) | undefined;
+
   /** Public accessor for the current webview view. */
   get view(): vscode.WebviewView | undefined {
     return this._view;
+  }
+
+  /** Register a callback to be notified when the user interacts with this view. */
+  set onDidReceiveInteraction(callback: (() => void) | undefined) {
+    this._onDidReceiveInteraction = callback;
   }
 
   constructor(
@@ -102,6 +110,9 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
     }
 
     const message = msg as WebViewToExtensionMessage;
+
+    // Notify that this provider received user interaction
+    this._onDidReceiveInteraction?.();
 
     try {
       switch (message.type) {

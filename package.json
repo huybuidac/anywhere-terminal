@@ -108,12 +108,12 @@
       {
         "command": "anywhereTerminal.splitHorizontal",
         "title": "AnyWhere Terminal: Split Horizontal",
-        "icon": "$(split-vertical)"
+        "icon": "media/split-horizontal.svg"
       },
       {
         "command": "anywhereTerminal.splitVertical",
         "title": "AnyWhere Terminal: Split Vertical",
-        "icon": "$(split-horizontal)"
+        "icon": "media/split-vertical.svg"
       },
       {
         "command": "anywhereTerminal.closeSplitPane",
