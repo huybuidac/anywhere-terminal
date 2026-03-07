@@ -33,9 +33,15 @@ export function activate(context: vscode.ExtensionContext) {
     }),
   );
 
-  // ─── Terminal Commands ──────────────────────────────────────────
+  // ─── Provider Lookup ──────────────────────────────────────────
 
-  // Track which provider last received user interaction (for correct split targeting)
+  // Map of view location to provider for direct lookup
+  const providers = {
+    sidebar: sidebarProvider,
+    panel: panelProvider,
+  };
+
+  // Track which provider last received user interaction (for keybinding fallback)
   let lastFocusedProvider: TerminalViewProvider = sidebarProvider;
 
   sidebarProvider.onDidReceiveInteraction = () => {
@@ -45,185 +51,130 @@ export function activate(context: vscode.ExtensionContext) {
     lastFocusedProvider = panelProvider;
   };
 
-  // Helper: get the focused provider (sidebar or panel).
-  // Uses last-interaction tracking to correctly target the view the user is working in.
+  // Helper: get the focused provider for keybinding context (both views may be visible).
   const getFocusedProvider = (): TerminalViewProvider => {
-    // If only one view is visible, use that one
     if (panelProvider.view?.visible && !sidebarProvider.view?.visible) {
       return panelProvider;
     }
     if (sidebarProvider.view?.visible && !panelProvider.view?.visible) {
       return sidebarProvider;
     }
-    // Both visible: use the last interacted provider
     return lastFocusedProvider;
   };
 
-  // newTerminal: create a new terminal tab in the focused view
+  // ─── Action Helpers ──────────────────────────────────────────
+
+  const doNewTerminal = (provider: TerminalViewProvider): void => {
+    const view = provider.view;
+    if (!view) {
+      return;
+    }
+    const viewId = provider.getViewId();
+    const newSessionId = sessionManager.createSession(viewId, view.webview);
+    const newSession = sessionManager.getSession(newSessionId);
+    if (newSession) {
+      safePostMessage(view.webview, {
+        type: "tabCreated",
+        tabId: newSessionId,
+        name: newSession.name,
+      });
+    }
+  };
+
+  const doKillTerminal = (provider: TerminalViewProvider): void => {
+    const activeSessionId = provider.getActiveSessionId();
+    if (!activeSessionId) {
+      return;
+    }
+    sessionManager.destroySession(activeSessionId);
+    const view = provider.view;
+    if (view) {
+      safePostMessage(view.webview, {
+        type: "tabRemoved",
+        tabId: activeSessionId,
+      });
+    }
+  };
+
+  const doClearTerminal = (provider: TerminalViewProvider): void => {
+    const activeSessionId = provider.getActiveSessionId();
+    if (!activeSessionId) {
+      return;
+    }
+    sessionManager.clearScrollback(activeSessionId);
+    const view = provider.view;
+    if (view) {
+      safePostMessage(view.webview, { type: "clear", tabId: activeSessionId });
+    }
+  };
+
+  const doSplit = (provider: TerminalViewProvider, direction: "horizontal" | "vertical"): void => {
+    const view = provider.view;
+    if (!view) {
+      return;
+    }
+    safePostMessage(view.webview, { type: "splitPane", direction });
+  };
+
+  const doCloseSplitPane = (provider: TerminalViewProvider): void => {
+    const view = provider.view;
+    if (!view) {
+      return;
+    }
+    safePostMessage(view.webview, { type: "closeSplitPane" });
+  };
+
+  // ─── Generic Commands (for keybindings — use getFocusedProvider) ──────
+
   context.subscriptions.push(
-    vscode.commands.registerCommand("anywhereTerminal.newTerminal", () => {
-      const provider = getFocusedProvider();
-      const view = provider.view;
-      if (!view) {
-        return;
-      }
-      const viewId = provider.getViewId();
-      const newSessionId = sessionManager.createSession(viewId, view.webview);
-      const newSession = sessionManager.getSession(newSessionId);
-      if (newSession) {
-        try {
-          void (
-            view.webview.postMessage({
-              type: "tabCreated",
-              tabId: newSessionId,
-              name: newSession.name,
-            }) as Thenable<boolean>
-          ).then(undefined, () => {});
-        } catch {
-          // Webview may be disposed
-        }
-      }
-    }),
+    vscode.commands.registerCommand("anywhereTerminal.newTerminal", () => doNewTerminal(getFocusedProvider())),
+    vscode.commands.registerCommand("anywhereTerminal.killTerminal", () => doKillTerminal(getFocusedProvider())),
+    vscode.commands.registerCommand("anywhereTerminal.clearTerminal", () => doClearTerminal(getFocusedProvider())),
+    vscode.commands.registerCommand("anywhereTerminal.splitHorizontal", () =>
+      doSplit(getFocusedProvider(), "horizontal"),
+    ),
+    vscode.commands.registerCommand("anywhereTerminal.splitVertical", () => doSplit(getFocusedProvider(), "vertical")),
+    vscode.commands.registerCommand("anywhereTerminal.closeSplitPane", () => doCloseSplitPane(getFocusedProvider())),
   );
 
-  // killTerminal: destroy the active session in the focused view
-  context.subscriptions.push(
-    vscode.commands.registerCommand("anywhereTerminal.killTerminal", () => {
-      const provider = getFocusedProvider();
-      const activeSessionId = provider.getActiveSessionId();
-      if (!activeSessionId) {
-        return;
-      }
-      sessionManager.destroySession(activeSessionId);
-      const view = provider.view;
-      if (view) {
-        try {
-          void (
-            view.webview.postMessage({
-              type: "tabRemoved",
-              tabId: activeSessionId,
-            }) as Thenable<boolean>
-          ).then(undefined, () => {});
-        } catch {
-          // Webview may be disposed
-        }
-      }
-    }),
-  );
+  // ─── View-Specific Commands (for view/title menus — directly target correct provider) ──
 
-  // clearTerminal: clear scrollback for the active session in the focused view
-  context.subscriptions.push(
-    vscode.commands.registerCommand("anywhereTerminal.clearTerminal", () => {
-      const provider = getFocusedProvider();
-      const activeSessionId = provider.getActiveSessionId();
-      if (!activeSessionId) {
-        return;
-      }
-      sessionManager.clearScrollback(activeSessionId);
-      const view = provider.view;
-      if (view) {
-        try {
-          void (
-            view.webview.postMessage({
-              type: "clear",
-              tabId: activeSessionId,
-            }) as Thenable<boolean>
-          ).then(undefined, () => {});
-        } catch {
-          // Webview may be disposed
-        }
-      }
-    }),
-  );
+  for (const loc of ["sidebar", "panel"] as const) {
+    const provider = providers[loc];
+    context.subscriptions.push(
+      vscode.commands.registerCommand(`anywhereTerminal.newTerminal.${loc}`, () => doNewTerminal(provider)),
+      vscode.commands.registerCommand(`anywhereTerminal.killTerminal.${loc}`, () => doKillTerminal(provider)),
+      vscode.commands.registerCommand(`anywhereTerminal.splitHorizontal.${loc}`, () => doSplit(provider, "horizontal")),
+      vscode.commands.registerCommand(`anywhereTerminal.splitVertical.${loc}`, () => doSplit(provider, "vertical")),
+    );
+  }
 
-  // focusSidebar: focus the sidebar terminal view
+  // ─── Focus & Move Commands ──────────────────────────────────────
+
   context.subscriptions.push(
     vscode.commands.registerCommand("anywhereTerminal.focusSidebar", () => {
       void vscode.commands.executeCommand("anywhereTerminal.sidebar.focus");
     }),
-  );
-
-  // focusPanel: focus the panel terminal view
-  context.subscriptions.push(
     vscode.commands.registerCommand("anywhereTerminal.focusPanel", () => {
       void vscode.commands.executeCommand("anywhereTerminal.panel.focus");
     }),
-  );
-
-  // moveToSecondary: focus sidebar then open "Move View" dialog
-  context.subscriptions.push(
     vscode.commands.registerCommand("anywhereTerminal.moveToSecondary", async () => {
       await vscode.commands.executeCommand("anywhereTerminal.sidebar.focus");
       await vscode.commands.executeCommand("workbench.action.moveView");
     }),
   );
 
-  // ─── Split Commands ──────────────────────────────────────────────
-
-  // splitHorizontal: split the active pane horizontally (top/bottom)
-  context.subscriptions.push(
-    vscode.commands.registerCommand("anywhereTerminal.splitHorizontal", () => {
-      const provider = getFocusedProvider();
-      const view = provider.view;
-      if (!view) {
-        return;
-      }
-      try {
-        void (
-          view.webview.postMessage({
-            type: "splitPane",
-            direction: "horizontal",
-          }) as Thenable<boolean>
-        ).then(undefined, () => {});
-      } catch {
-        // Webview may be disposed
-      }
-    }),
-  );
-
-  // splitVertical: split the active pane vertically (left/right)
-  context.subscriptions.push(
-    vscode.commands.registerCommand("anywhereTerminal.splitVertical", () => {
-      const provider = getFocusedProvider();
-      const view = provider.view;
-      if (!view) {
-        return;
-      }
-      try {
-        void (
-          view.webview.postMessage({
-            type: "splitPane",
-            direction: "vertical",
-          }) as Thenable<boolean>
-        ).then(undefined, () => {});
-      } catch {
-        // Webview may be disposed
-      }
-    }),
-  );
-
-  // closeSplitPane: close the active pane within a split layout
-  context.subscriptions.push(
-    vscode.commands.registerCommand("anywhereTerminal.closeSplitPane", () => {
-      const provider = getFocusedProvider();
-      const view = provider.view;
-      if (!view) {
-        return;
-      }
-      try {
-        void (
-          view.webview.postMessage({
-            type: "closeSplitPane",
-          }) as Thenable<boolean>
-        ).then(undefined, () => {});
-      } catch {
-        // Webview may be disposed
-      }
-    }),
-  );
-
   // Register SessionManager for disposal on extension deactivation
   context.subscriptions.push(sessionManager);
+}
+
+/** Safely post a message to a webview, handling both sync throws and async rejections. */
+function safePostMessage(webview: vscode.Webview, message: unknown): void {
+  try {
+    void (webview.postMessage(message) as Thenable<boolean>).then(undefined, () => {});
+  } catch {
+    // Webview may be disposed
+  }
 }
 
 export function deactivate() {}

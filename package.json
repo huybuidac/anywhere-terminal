@@ -118,28 +118,88 @@
       {
         "command": "anywhereTerminal.closeSplitPane",
         "title": "AnyWhere Terminal: Close Split Pane"
+      },
+      {
+        "command": "anywhereTerminal.newTerminal.sidebar",
+        "title": "AnyWhere Terminal: New Terminal (Sidebar)",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "anywhereTerminal.newTerminal.panel",
+        "title": "AnyWhere Terminal: New Terminal (Panel)",
+        "icon": "$(plus)"
+      },
+      {
+        "command": "anywhereTerminal.killTerminal.sidebar",
+        "title": "AnyWhere Terminal: Kill Terminal (Sidebar)",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "anywhereTerminal.killTerminal.panel",
+        "title": "AnyWhere Terminal: Kill Terminal (Panel)",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "anywhereTerminal.splitHorizontal.sidebar",
+        "title": "AnyWhere Terminal: Split Horizontal (Sidebar)",
+        "icon": "media/split-horizontal.svg"
+      },
+      {
+        "command": "anywhereTerminal.splitHorizontal.panel",
+        "title": "AnyWhere Terminal: Split Horizontal (Panel)",
+        "icon": "media/split-horizontal.svg"
+      },
+      {
+        "command": "anywhereTerminal.splitVertical.sidebar",
+        "title": "AnyWhere Terminal: Split Vertical (Sidebar)",
+        "icon": "media/split-vertical.svg"
+      },
+      {
+        "command": "anywhereTerminal.splitVertical.panel",
+        "title": "AnyWhere Terminal: Split Vertical (Panel)",
+        "icon": "media/split-vertical.svg"
       }
     ],
     "menus": {
       "view/title": [
         {
-          "command": "anywhereTerminal.newTerminal",
-          "when": "view == anywhereTerminal.sidebar || view == anywhereTerminal.panel",
+          "command": "anywhereTerminal.newTerminal.sidebar",
+          "when": "view == anywhereTerminal.sidebar",
           "group": "navigation"
         },
         {
-          "command": "anywhereTerminal.splitVertical",
-          "when": "view == anywhereTerminal.sidebar || view == anywhereTerminal.panel",
+          "command": "anywhereTerminal.newTerminal.panel",
+          "when": "view == anywhereTerminal.panel",
           "group": "navigation"
         },
         {
-          "command": "anywhereTerminal.splitHorizontal",
-          "when": "view == anywhereTerminal.sidebar || view == anywhereTerminal.panel",
+          "command": "anywhereTerminal.splitVertical.sidebar",
+          "when": "view == anywhereTerminal.sidebar",
           "group": "navigation"
         },
         {
-          "command": "anywhereTerminal.killTerminal",
-          "when": "view == anywhereTerminal.sidebar || view == anywhereTerminal.panel",
+          "command": "anywhereTerminal.splitVertical.panel",
+          "when": "view == anywhereTerminal.panel",
+          "group": "navigation"
+        },
+        {
+          "command": "anywhereTerminal.splitHorizontal.sidebar",
+          "when": "view == anywhereTerminal.sidebar",
+          "group": "navigation"
+        },
+        {
+          "command": "anywhereTerminal.splitHorizontal.panel",
+          "when": "view == anywhereTerminal.panel",
+          "group": "navigation"
+        },
+        {
+          "command": "anywhereTerminal.killTerminal.sidebar",
+          "when": "view == anywhereTerminal.sidebar",
+          "group": "navigation"
+        },
+        {
+          "command": "anywhereTerminal.killTerminal.panel",
+          "when": "view == anywhereTerminal.panel",
           "group": "navigation"
         }
       ]
