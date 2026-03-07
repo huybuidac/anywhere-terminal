@@ -309,6 +309,36 @@ describe("createKeyEventHandler", () => {
     });
   });
 
+  // ─── Cmd+Backspace ─────────────────────────────────────────────
+
+  describe("Cmd+Backspace (kill line)", () => {
+    it("sends Ctrl+U (\\x15) via postMessage and returns false on macOS", () => {
+      const terminal = createMockTerminal();
+      const postMessage = vi.fn();
+      const deps = createDeps({ terminal, postMessage, isMac: true, getActiveTabId: vi.fn(() => "tab-7") });
+      const handler = createKeyEventHandler(deps);
+
+      const result = handler(makeKeyEvent({ key: "Backspace", metaKey: true }));
+
+      expect(result).toBe(false);
+      expect(postMessage).toHaveBeenCalledWith({ type: "input", tabId: "tab-7", data: "\x15" });
+      expect(terminal.paste).not.toHaveBeenCalled();
+    });
+
+    it("sends Ctrl+U (\\x15) via postMessage and returns false on non-Mac (Ctrl+Backspace)", () => {
+      const terminal = createMockTerminal();
+      const postMessage = vi.fn();
+      const deps = createDeps({ terminal, postMessage, isMac: false, getActiveTabId: vi.fn(() => "tab-3") });
+      const handler = createKeyEventHandler(deps);
+
+      const result = handler(makeKeyEvent({ key: "Backspace", ctrlKey: true }));
+
+      expect(result).toBe(false);
+      expect(postMessage).toHaveBeenCalledWith({ type: "input", tabId: "tab-3", data: "\x15" });
+      expect(terminal.paste).not.toHaveBeenCalled();
+    });
+  });
+
   // ─── Escape Key ──────────────────────────────────────────────────
 
   describe("Escape key (clear selection)", () => {

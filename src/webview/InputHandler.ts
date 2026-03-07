@@ -131,6 +131,14 @@ export function createKeyEventHandler(deps: KeyHandlerDeps): (event: KeyboardEve
         terminal.selectAll();
         return false;
 
+      case "backspace":
+        // Cmd+Delete (macOS) / Ctrl+Backspace: kill current input line
+        // Sends Ctrl+U (\x15) — the Unix line-kill control character.
+        // Must use postMessage (raw PTY input) instead of terminal.paste()
+        // to avoid bracketed paste wrapping which would print ^U literally.
+        postMessage({ type: "input", tabId: getActiveTabId(), data: "\x15" });
+        return false;
+
       default:
         return true;
     }

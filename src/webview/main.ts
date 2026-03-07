@@ -682,7 +682,8 @@ function fitTerminal(instance: TerminalInstance): void {
   const paddingRight = Number.parseInt(xtermStyle.getPropertyValue("padding-right"), 10) || 0;
 
   // Scrollbar width: same logic as FitAddon — scrollback=0 → 0, else overviewRuler.width || 14
-  const scrollbarWidth = instance.terminal.options.scrollback === 0 ? 0 : instance.terminal.options.overviewRuler?.width || 14;
+  const scrollbarWidth =
+    instance.terminal.options.scrollback === 0 ? 0 : instance.terminal.options.overviewRuler?.width || 14;
 
   const availableHeight = parentRect.height - paddingTop - paddingBottom;
   const availableWidth = parentRect.width - paddingLeft - paddingRight - scrollbarWidth;
