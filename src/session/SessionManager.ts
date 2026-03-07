@@ -44,6 +44,8 @@ export interface TerminalSession {
   disposables: Array<{ dispose(): void }>;
   /** Webview message sender for this session */
   webview: MessageSender;
+  /** Whether this session is a split pane (not a root tab). Split pane sessions are excluded from getTabsForView(). */
+  isSplitPane: boolean;
 }
 
 // ─── SessionManager ─────────────────────────────────────────────────
@@ -83,11 +85,16 @@ export class SessionManager {
    * Create a new terminal session for a view.
    *
    * Spawns a PTY, creates an OutputBuffer, wires events, and registers
-   * the session in all maps. The new session becomes the active tab.
+   * the session in all maps. The new session becomes the active tab
+   * (unless it is a split pane session).
    *
+   * @param options.isSplitPane If true, marks the session as a split pane.
+   *   Split pane sessions are excluded from getTabsForView() and do NOT
+   *   deactivate existing sessions.
    * @returns The session ID (UUID)
    */
-  createSession(viewId: string, webview: MessageSender): string {
+  createSession(viewId: string, webview: MessageSender, options?: { isSplitPane?: boolean }): string {
+    const isSplitPane = options?.isSplitPane ?? false;
     const id = crypto.randomUUID();
     const number = this.findAvailableNumber();
     const name = `Terminal ${number}`;
@@ -111,7 +118,7 @@ export class SessionManager {
       viewId,
       pty,
       name,
-      isActive: true,
+      isActive: !isSplitPane,
       number,
       outputBuffer,
       scrollbackCache: [],
@@ -121,15 +128,18 @@ export class SessionManager {
       rows: 30,
       disposables: [],
       webview,
+      isSplitPane,
     };
 
-    // Deactivate other sessions in the same view
-    const viewSessionIds = this.viewSessions.get(viewId);
-    if (viewSessionIds) {
-      for (const sid of viewSessionIds) {
-        const s = this.sessions.get(sid);
-        if (s) {
-          s.isActive = false;
+    // Deactivate other sessions in the same view (only for root tab sessions)
+    if (!isSplitPane) {
+      const viewSessionIds = this.viewSessions.get(viewId);
+      if (viewSessionIds) {
+        for (const sid of viewSessionIds) {
+          const s = this.sessions.get(sid);
+          if (s) {
+            s.isActive = false;
+          }
         }
       }
     }
@@ -224,7 +234,7 @@ export class SessionManager {
     return viewSessionIds
       .map((sid) => {
         const s = this.sessions.get(sid);
-        if (!s) {
+        if (!s || s.isSplitPane) {
           return undefined;
         }
         return { id: s.id, name: s.name, isActive: s.isActive };

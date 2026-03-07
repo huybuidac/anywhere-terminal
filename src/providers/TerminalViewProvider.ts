@@ -181,7 +181,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           ) {
             const splitMsg = message as { direction: "horizontal" | "vertical"; sourcePaneId: string };
             const viewId = this.getViewId();
-            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview);
+            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, { isSplitPane: true });
             const newSession = this.sessionManager.getSession(newSessionId);
             if (newSession) {
               this.safePostMessage(webviewView.webview, {

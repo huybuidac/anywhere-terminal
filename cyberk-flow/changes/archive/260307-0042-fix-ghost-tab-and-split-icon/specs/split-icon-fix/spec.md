@@ -1,8 +1,6 @@
-# split-icon-fix Specification
+# Spec: split-icon-fix
 
-## Purpose
-TBD
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Split Action Button Icon Mapping
 
@@ -16,4 +14,3 @@ This follows VS Code's codicon convention where the name describes the **pane ar
 
 - `anywhereTerminal.splitVertical` → `$(split-horizontal)` (side-by-side icon)
 - `anywhereTerminal.splitHorizontal` → `$(split-vertical)` (stacked icon)
-

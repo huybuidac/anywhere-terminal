@@ -400,3 +400,74 @@ describe("TerminalViewProvider: visibility pause/resume", () => {
     sm.dispose();
   });
 });
+
+// ─── Split Pane Ghost Tab Fix ───────────────────────────────────────
+
+describe("TerminalViewProvider: split pane ghost tab fix", () => {
+  it("creates split pane session with isSplitPane flag", () => {
+    const sm = new SessionManager();
+    const provider = new TerminalViewProvider({ fsPath: "/mock/extension" } as vscode.Uri, sm, "sidebar");
+
+    const { webviewView, messageHandlers } = createMockWebviewView();
+    provider.resolveWebviewView(webviewView, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+
+    // Simulate ready — creates root session
+    for (const handler of messageHandlers) {
+      handler({ type: "ready" });
+    }
+
+    const tabsBefore = sm.getTabsForView(provider.getViewId());
+    expect(tabsBefore).toHaveLength(1);
+    const rootTabId = tabsBefore[0].id;
+
+    // Simulate split request
+    for (const handler of messageHandlers) {
+      handler({ type: "requestSplitSession", direction: "vertical", sourcePaneId: rootTabId });
+    }
+
+    // getTabsForView should still return only the root tab (split pane filtered out)
+    const tabsAfter = sm.getTabsForView(provider.getViewId());
+    expect(tabsAfter).toHaveLength(1);
+    expect(tabsAfter[0].id).toBe(rootTabId);
+
+    // Root tab should still be active
+    expect(tabsAfter[0].isActive).toBe(true);
+
+    sm.dispose();
+  });
+
+  it("split pane sessions are excluded from init on re-creation", () => {
+    const sm = new SessionManager();
+    const provider = new TerminalViewProvider({ fsPath: "/mock/extension" } as vscode.Uri, sm, "sidebar");
+
+    // First creation
+    const { webviewView: wv1, messageHandlers: mh1 } = createMockWebviewView();
+    provider.resolveWebviewView(wv1, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+    for (const handler of mh1) {
+      handler({ type: "ready" });
+    }
+
+    const rootTabId = sm.getTabsForView(provider.getViewId())[0].id;
+
+    // Create a split pane
+    for (const handler of mh1) {
+      handler({ type: "requestSplitSession", direction: "horizontal", sourcePaneId: rootTabId });
+    }
+
+    // Re-creation (simulate webview dispose and re-resolve)
+    const { webviewView: wv2, messageHandlers: mh2, postMessageSpy: pms2 } = createMockWebviewView();
+    provider.resolveWebviewView(wv2, {} as vscode.WebviewViewResolveContext, {} as vscode.CancellationToken);
+    for (const handler of mh2) {
+      handler({ type: "ready" });
+    }
+
+    // Init message should only contain the root tab, NOT the split pane
+    const initCall = pms2.mock.calls.find((call: unknown[]) => (call[0] as { type: string }).type === "init");
+    expect(initCall).toBeDefined();
+    const initMsg = initCall![0] as { tabs: Array<{ id: string }> };
+    expect(initMsg.tabs).toHaveLength(1);
+    expect(initMsg.tabs[0].id).toBe(rootTabId);
+
+    sm.dispose();
+  });
+});

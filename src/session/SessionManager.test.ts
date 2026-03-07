@@ -353,6 +353,77 @@ describe("SessionManager: getTabsForView", () => {
   });
 });
 
+// ─── isSplitPane ────────────────────────────────────────────────────
+
+describe("SessionManager: isSplitPane", () => {
+  it("defaults isSplitPane to false", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    const id = sm.createSession("sidebar", webview);
+    const session = sm.getSession(id);
+
+    expect(session!.isSplitPane).toBe(false);
+
+    sm.dispose();
+  });
+
+  it("marks session as split pane when isSplitPane option is true", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    const id = sm.createSession("sidebar", webview, { isSplitPane: true });
+    const session = sm.getSession(id);
+
+    expect(session!.isSplitPane).toBe(true);
+
+    sm.dispose();
+  });
+
+  it("excludes split pane sessions from getTabsForView", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    const rootId = sm.createSession("sidebar", webview);
+    sm.createSession("sidebar", webview, { isSplitPane: true });
+    sm.createSession("sidebar", webview, { isSplitPane: true });
+
+    const tabs = sm.getTabsForView("sidebar");
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0].id).toBe(rootId);
+
+    sm.dispose();
+  });
+
+  it("split pane creation does NOT deactivate the root tab", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    const rootId = sm.createSession("sidebar", webview);
+    expect(sm.getSession(rootId)!.isActive).toBe(true);
+
+    // Create split pane — should NOT deactivate root
+    const splitId = sm.createSession("sidebar", webview, { isSplitPane: true });
+    expect(sm.getSession(rootId)!.isActive).toBe(true);
+    expect(sm.getSession(splitId)!.isActive).toBe(false);
+
+    sm.dispose();
+  });
+
+  it("split pane session is still accessible via getSession", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    const splitId = sm.createSession("sidebar", webview, { isSplitPane: true });
+    const session = sm.getSession(splitId);
+
+    expect(session).toBeDefined();
+    expect(session!.isSplitPane).toBe(true);
+
+    sm.dispose();
+  });
+});
+
 // ─── getSession ─────────────────────────────────────────────────────
 
 describe("SessionManager: getSession", () => {
