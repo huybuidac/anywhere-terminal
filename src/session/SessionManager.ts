@@ -48,6 +48,24 @@ export interface TerminalSession {
   isSplitPane: boolean;
 }
 
+/** Aggregate memory usage snapshot across all sessions. */
+export interface MemoryMetrics {
+  /** Number of active sessions */
+  sessionCount: number;
+  /** Total characters in all output buffers (unflushed) */
+  totalBufferSize: number;
+  /** Total characters in all scrollback caches */
+  totalScrollbackSize: number;
+  /** Per-session breakdown */
+  sessions: Array<{
+    id: string;
+    name: string;
+    bufferSize: number;
+    scrollbackSize: number;
+    unackedCharCount: number;
+  }>;
+}
+
 // ─── SessionManager ─────────────────────────────────────────────────
 
 /**
@@ -325,6 +343,40 @@ export class SessionManager {
       return "";
     }
     return session.scrollbackCache.join("");
+  }
+
+  /**
+   * Get aggregate memory usage metrics across all sessions.
+   * Computes totals on demand — zero overhead when not called.
+   */
+  getMemoryMetrics(): MemoryMetrics {
+    let totalBufferSize = 0;
+    let totalScrollbackSize = 0;
+    const sessions: MemoryMetrics["sessions"] = [];
+
+    for (const session of this.sessions.values()) {
+      const bufferSize = session.outputBuffer.bufferSize;
+      const { scrollbackSize } = session;
+      const unackedCharCount = session.outputBuffer.unackedCharCount;
+
+      totalBufferSize += bufferSize;
+      totalScrollbackSize += scrollbackSize;
+
+      sessions.push({
+        id: session.id,
+        name: session.name,
+        bufferSize,
+        scrollbackSize,
+        unackedCharCount,
+      });
+    }
+
+    return {
+      sessionCount: this.sessions.size,
+      totalBufferSize,
+      totalScrollbackSize,
+      sessions,
+    };
   }
 
   /**

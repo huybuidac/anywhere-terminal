@@ -97,6 +97,9 @@ let resizeTimeout: number | undefined;
 /** IME composition tracking. */
 let isComposing = false;
 
+/** Whether WebGL initialization has failed — prevents retrying on subsequent terminals. */
+let webglFailed = false;
+
 /** ResizeObserver instance — one per webview, observes #terminal-container. */
 let resizeObserver: ResizeObserver | undefined;
 
@@ -755,14 +758,19 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
 
   // Try to enable WebGL renderer for better rendering on Retina displays
   // (eliminates horizontal line gaps between rows in canvas renderer)
-  try {
-    const webglAddon = new WebglAddon();
-    webglAddon.onContextLoss(() => {
-      webglAddon.dispose();
-    });
-    terminal.loadAddon(webglAddon);
-  } catch {
-    console.warn("[AnyWhere Terminal] WebGL renderer not available, using canvas fallback");
+  if (!webglFailed) {
+    try {
+      const webglAddon = new WebglAddon();
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+        webglFailed = true;
+        console.warn("[AnyWhere Terminal] WebGL context lost, falling back to canvas renderer");
+      });
+      terminal.loadAddon(webglAddon);
+    } catch {
+      webglFailed = true;
+      console.warn("[AnyWhere Terminal] WebGL renderer failed, using canvas fallback for all future terminals");
+    }
   }
 
   // Wire resize event -> send resize message to extension
