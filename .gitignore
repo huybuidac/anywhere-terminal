@@ -6,6 +6,9 @@ node_modules
 .agents/skills/cyberk-flow
 .agents/workflows/cyberk-flow
 .opencode/plugins/cyber-flow.ts
+.drafts
+cyberk-flow/memory.db*
+session-ses_*
 
 # Build artifacts in media/
 media/webview.js
@@ -18,5 +21,9 @@ coverage/
 # cyberk-flow
 .drafts
 cyberk-flow/memory.db*
-*.vsix
 session-ses_*
+*.vsix
+
+# cyberk-flow
+.agents/rules/cyberk-flow
+.agents/workflows/cf-*
