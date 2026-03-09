@@ -3,13 +3,7 @@
 // Tests the extracted key event handler and paste logic with mocked dependencies.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  type ClipboardProvider,
-  createKeyEventHandler,
-  handlePaste,
-  type KeyHandlerDeps,
-  type TerminalLike,
-} from "./InputHandler";
+import { type ClipboardProvider, createKeyEventHandler, type KeyHandlerDeps, type TerminalLike } from "./InputHandler";
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -19,7 +13,6 @@ function createMockTerminal(): TerminalLike {
     hasSelection: vi.fn(() => false),
     getSelection: vi.fn(() => ""),
     clearSelection: vi.fn(),
-    paste: vi.fn(),
     clear: vi.fn(),
     selectAll: vi.fn(),
   };
@@ -244,7 +237,7 @@ describe("createKeyEventHandler", () => {
   // ─── Cmd+V ──────────────────────────────────────────────────────
 
   describe("Cmd+V (paste)", () => {
-    it("returns false and calls handlePaste when clipboard is available", () => {
+    it("returns false to delegate paste to browser when clipboard is available", () => {
       const deps = createDeps();
       const handler = createKeyEventHandler(deps);
       const result = handler(makeKeyEvent({ key: "v", metaKey: true }));
@@ -322,7 +315,6 @@ describe("createKeyEventHandler", () => {
 
       expect(result).toBe(false);
       expect(postMessage).toHaveBeenCalledWith({ type: "input", tabId: "tab-7", data: "\x15" });
-      expect(terminal.paste).not.toHaveBeenCalled();
     });
 
     it("sends Ctrl+U (\\x15) via postMessage and returns false on non-Mac (Ctrl+Backspace)", () => {
@@ -335,7 +327,6 @@ describe("createKeyEventHandler", () => {
 
       expect(result).toBe(false);
       expect(postMessage).toHaveBeenCalledWith({ type: "input", tabId: "tab-3", data: "\x15" });
-      expect(terminal.paste).not.toHaveBeenCalled();
     });
   });
 
@@ -394,74 +385,5 @@ describe("createKeyEventHandler", () => {
       const result = handler(makeKeyEvent({ key: "s", metaKey: true }));
       expect(result).toBe(true);
     });
-  });
-});
-
-// ─── handlePaste ────────────────────────────────────────────────────
-
-describe("handlePaste", () => {
-  it("pastes text from clipboard to terminal", async () => {
-    const terminal = createMockTerminal();
-    const clipboard = createMockClipboard("hello world");
-
-    await handlePaste(terminal, clipboard);
-
-    expect(clipboard.readText).toHaveBeenCalled();
-    expect(terminal.paste).toHaveBeenCalledWith("hello world");
-  });
-
-  it("does nothing when clipboard returns empty string", async () => {
-    const terminal = createMockTerminal();
-    const clipboard = createMockClipboard("");
-
-    await handlePaste(terminal, clipboard);
-
-    expect(clipboard.readText).toHaveBeenCalled();
-    expect(terminal.paste).not.toHaveBeenCalled();
-  });
-
-  it("logs warning and returns when clipboard is undefined", async () => {
-    const terminal = createMockTerminal();
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    await handlePaste(terminal, undefined);
-
-    expect(terminal.paste).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith("[AnyWhere Terminal] Clipboard API not available");
-  });
-
-  it("logs warning and returns when clipboard has no readText", async () => {
-    const terminal = createMockTerminal();
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    // Simulate clipboard object without readText
-    const clipboard = { writeText: vi.fn() } as unknown as ClipboardProvider;
-
-    await handlePaste(terminal, clipboard);
-
-    expect(terminal.paste).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith("[AnyWhere Terminal] Clipboard API not available");
-  });
-
-  it("catches clipboard read errors and logs warning", async () => {
-    const terminal = createMockTerminal();
-    const clipboard = createMockClipboard();
-    vi.mocked(clipboard.readText).mockRejectedValue(new Error("permission denied"));
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    await handlePaste(terminal, clipboard);
-
-    expect(terminal.paste).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith("[AnyWhere Terminal] Clipboard read failed:", expect.any(Error));
-  });
-
-  it("pastes multi-line text correctly", async () => {
-    const terminal = createMockTerminal();
-    const multiLine = "line1\nline2\nline3";
-    const clipboard = createMockClipboard(multiLine);
-
-    await handlePaste(terminal, clipboard);
-
-    // terminal.paste() handles line ending normalization natively
-    expect(terminal.paste).toHaveBeenCalledWith(multiLine);
   });
 });

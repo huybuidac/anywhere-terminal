@@ -90,6 +90,8 @@ export interface AckMessage {
   type: "ack";
   /** Number of characters processed (sent in batches of ACK_BATCH_SIZE = 5000) */
   charCount: number;
+  /** Session ID this ack belongs to (routes ack to the correct OutputBuffer). */
+  tabId: string;
 }
 
 /**

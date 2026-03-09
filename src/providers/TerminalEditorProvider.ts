@@ -148,12 +148,8 @@ export class TerminalEditorProvider {
           break;
 
         case "ack":
-          if (typeof message.charCount === "number") {
-            const tabs = this.sessionManager.getTabsForView(this._viewId);
-            const activeTab = tabs.find((t) => t.isActive);
-            if (activeTab) {
-              this.sessionManager.handleAck(activeTab.id, message.charCount);
-            }
+          if (typeof message.charCount === "number" && typeof message.tabId === "string") {
+            this.sessionManager.handleAck(message.tabId, message.charCount);
           }
           break;
 

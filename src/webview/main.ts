@@ -38,8 +38,6 @@ interface TerminalInstance {
   id: string;
   name: string;
   terminal: Terminal;
-  fitAddon: FitAddon;
-  webLinksAddon: WebLinksAddon;
   container: HTMLDivElement;
   /** Whether the PTY process has exited (terminal becomes read-only). */
   exited: boolean;
@@ -85,14 +83,17 @@ let currentConfig: TerminalConfig = {
   fontFamily: "",
 };
 
-/** Flow control: accumulated chars since last ack. */
-let unsentAckChars = 0;
+/** Flow control: accumulated chars since last ack, tracked per session. */
+const unsentAckCharsMap = new Map<string, number>();
 
 /** Whether a resize was deferred because the container was invisible. */
 let pendingResize = false;
 
-/** Debounce timer for resize events. */
-let resizeTimeout: number | undefined;
+/** Debounce timer for window resize events (debouncedFit). */
+let fitResizeTimeout: number | undefined;
+
+/** Debounce timer for split-pane resize events (debouncedFitAllLeaves). */
+let splitFitTimeout: number | undefined;
 
 /** IME composition tracking. */
 let isComposing = false;
@@ -217,6 +218,7 @@ function closeSplitPaneById(paneSessionId: string): void {
     closedInstance.container.remove();
     terminals.delete(paneSessionId);
   }
+  unsentAckCharsMap.delete(paneSessionId);
 
   // Request the extension host to destroy the session
   vscode.postMessage({ type: "requestCloseSplitPane", sessionId: paneSessionId });
@@ -397,8 +399,8 @@ function updateActivePaneVisual(tabId: string): void {
  * Debounced fit for all leaf terminals in a tab.
  */
 function debouncedFitAllLeaves(tabId: string): void {
-  clearTimeout(resizeTimeout);
-  resizeTimeout = window.setTimeout(() => {
+  clearTimeout(splitFitTimeout);
+  splitFitTimeout = window.setTimeout(() => {
     const layout = tabLayouts.get(tabId);
     if (!layout) {
       return;
@@ -634,14 +636,17 @@ function attachInputHandler(terminal: Terminal, tabId: string): void {
 // ─── Flow Control ───────────────────────────────────────────────────
 
 /**
- * Track characters written and send ack when threshold reached.
+ * Track characters written per session and send ack when threshold reached.
  * See: docs/design/output-buffering.md#§4
  */
-function ackChars(count: number): void {
-  unsentAckChars += count;
-  if (unsentAckChars >= ACK_BATCH_SIZE) {
-    vscode.postMessage({ type: "ack", charCount: unsentAckChars });
-    unsentAckChars = 0;
+function ackChars(count: number, tabId: string): void {
+  const current = unsentAckCharsMap.get(tabId) ?? 0;
+  const updated = current + count;
+  if (updated >= ACK_BATCH_SIZE) {
+    vscode.postMessage({ type: "ack", charCount: updated, tabId });
+    unsentAckCharsMap.set(tabId, 0);
+  } else {
+    unsentAckCharsMap.set(tabId, updated);
   }
 }
 
@@ -696,7 +701,7 @@ function fitTerminal(instance: TerminalInstance): void {
     return;
   }
 
-  core._renderService.clear();
+  core?._renderService?.clear();
   instance.terminal.resize(cols, rows);
 }
 
@@ -706,8 +711,8 @@ function fitTerminal(instance: TerminalInstance): void {
  * Uses requestAnimationFrame to ensure the browser has computed new layout dimensions.
  */
 function debouncedFit(): void {
-  clearTimeout(resizeTimeout);
-  resizeTimeout = window.setTimeout(() => {
+  clearTimeout(fitResizeTimeout);
+  fitResizeTimeout = window.setTimeout(() => {
     requestAnimationFrame(() => {
       fitAllTerminals();
     });
@@ -893,8 +898,6 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
     id,
     name,
     terminal,
-    fitAddon,
-    webLinksAddon,
     container,
     exited: false,
   };
@@ -1034,6 +1037,7 @@ function removeTerminal(id: string): void {
   instance.terminal.dispose();
   instance.container.remove();
   terminals.delete(id);
+  unsentAckCharsMap.delete(id);
 
   // 1b. Dispose all split pane terminals belonging to this tab
   for (const splitId of splitSessionIds) {
@@ -1043,6 +1047,7 @@ function removeTerminal(id: string): void {
       splitInstance.container.remove();
       terminals.delete(splitId);
     }
+    unsentAckCharsMap.delete(splitId);
     // Notify extension host to destroy the PTY session
     vscode.postMessage({ type: "requestCloseSplitPane", sessionId: splitId });
   }
@@ -1206,11 +1211,11 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
       const instance = terminals.get(msg.tabId);
       if (instance) {
         instance.terminal.write(msg.data, () => {
-          ackChars(dataLen);
+          ackChars(dataLen, msg.tabId);
         });
       } else {
         // Tab not found — still ack to prevent flow control deadlock
-        ackChars(dataLen);
+        ackChars(dataLen, msg.tabId);
       }
       break;
     }

@@ -140,13 +140,8 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           break;
 
         case "ack":
-          if (typeof message.charCount === "number") {
-            // Find the session for this ack — use the active session's output buffer
-            const tabs = this.sessionManager.getTabsForView(this.getViewId());
-            const activeTab = tabs.find((t) => t.isActive);
-            if (activeTab) {
-              this.sessionManager.handleAck(activeTab.id, message.charCount);
-            }
+          if (typeof message.charCount === "number" && typeof message.tabId === "string") {
+            this.sessionManager.handleAck(message.tabId, message.charCount);
           }
           break;
 
