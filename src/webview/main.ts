@@ -18,6 +18,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import type { ExtensionToWebViewMessage, InitMessage, TerminalConfig } from "../types/messages";
 import { type ClipboardProvider, createKeyEventHandler } from "./InputHandler";
+import { fitTerminal as fitTerminalCore } from "./resize/XtermFitService";
 import { renderSplitTree } from "./SplitContainer";
 import {
   createBranch,
@@ -30,6 +31,8 @@ import {
 } from "./SplitModel";
 import { attachResizeHandle } from "./SplitResizeHandle";
 import { handleTabKeyboardShortcut, renderTabBar } from "./TabBarUtils";
+import { type TerminalLocation, ThemeManager } from "./theme/ThemeManager";
+import { showBanner } from "./ui/BannerService";
 
 // ─── Types ──────────────────────────────────────────────────────────
 
@@ -43,9 +46,6 @@ interface TerminalInstance {
   exited: boolean;
 }
 
-/** Terminal location for theme background fallback. */
-type TerminalLocation = "panel" | "sidebar" | "editor";
-
 // ─── Constants ──────────────────────────────────────────────────────
 
 /** Flow control: send ack after this many chars are processed. */
@@ -53,13 +53,6 @@ const ACK_BATCH_SIZE = 5000;
 
 /** Resize debounce interval in milliseconds. */
 const RESIZE_DEBOUNCE_MS = 100;
-
-/** Location-specific background CSS variable fallback map. */
-const LOCATION_BACKGROUND_MAP: Record<TerminalLocation, string> = {
-  panel: "--vscode-panel-background",
-  sidebar: "--vscode-sideBar-background",
-  editor: "--vscode-editor-background",
-};
 
 // ─── State ──────────────────────────────────────────────────────────
 
@@ -72,8 +65,8 @@ const terminals = new Map<string, TerminalInstance>();
 /** Currently active (visible) terminal tab ID. */
 let activeTabId: string | null = null;
 
-/** Terminal location (sidebar/panel/editor), inferred from body data attribute. */
-let terminalLocation: TerminalLocation = "sidebar";
+/** ThemeManager — owns theme resolution, location state, and theme watching. */
+const themeManager = new ThemeManager("sidebar");
 
 /** Current terminal config — set from init, updated by configUpdate. */
 let currentConfig: TerminalConfig = {
@@ -103,9 +96,6 @@ let webglFailed = false;
 
 /** ResizeObserver instance — one per webview, observes #terminal-container. */
 let resizeObserver: ResizeObserver | undefined;
-
-/** MutationObserver for theme change detection. */
-let themeObserver: MutationObserver | undefined;
 
 /** Split layout tree per tab — maps tab ID to its root SplitNode. */
 const tabLayouts = new Map<string, SplitNode>();
@@ -415,179 +405,10 @@ function debouncedFitAllLeaves(tabId: string): void {
   }, RESIZE_DEBOUNCE_MS);
 }
 
-/** Apply background color for the inferred location to the webview body. */
-function applyBodyBackground(location: TerminalLocation): void {
-  const style = getComputedStyle(document.documentElement);
-  const varName = LOCATION_BACKGROUND_MAP[location];
-  const color = style.getPropertyValue(varName).trim();
-  if (color) {
-    document.body.style.backgroundColor = color;
-  }
-}
-
 /** Update location and re-apply terminal theme/background when it changes. */
 function updateLocation(location: TerminalLocation): void {
-  if (terminalLocation === location) {
-    return;
-  }
-  terminalLocation = location;
-  applyBodyBackground(location);
-  applyThemeToAll();
-}
-
-// ─── Theme Manager ──────────────────────────────────────────────────
-
-/**
- * Build an xterm.js ITheme object from VS Code's CSS variables.
- * See: docs/design/theme-integration.md#§6
- */
-function getXtermTheme(location: TerminalLocation = "sidebar"): Record<string, string | undefined> {
-  const style = getComputedStyle(document.documentElement);
-  const get = (varName: string): string | undefined => {
-    const value = style.getPropertyValue(varName).trim();
-    return value || undefined;
-  };
-
-  const background = get(LOCATION_BACKGROUND_MAP[location]) ?? get("--vscode-terminal-background") ?? "#1e1e1e";
-
-  const foreground = get("--vscode-terminal-foreground") ?? get("--vscode-editor-foreground") ?? "#cccccc";
-
-  return {
-    background,
-    foreground,
-    cursor: get("--vscode-terminalCursor-foreground"),
-    cursorAccent: get("--vscode-terminalCursor-background"),
-    selectionBackground: get("--vscode-terminal-selectionBackground"),
-    selectionForeground: get("--vscode-terminal-selectionForeground"),
-    selectionInactiveBackground: get("--vscode-terminal-inactiveSelectionBackground"),
-
-    // Standard ANSI colors (0-7)
-    black: get("--vscode-terminal-ansiBlack"),
-    red: get("--vscode-terminal-ansiRed"),
-    green: get("--vscode-terminal-ansiGreen"),
-    yellow: get("--vscode-terminal-ansiYellow"),
-    blue: get("--vscode-terminal-ansiBlue"),
-    magenta: get("--vscode-terminal-ansiMagenta"),
-    cyan: get("--vscode-terminal-ansiCyan"),
-    white: get("--vscode-terminal-ansiWhite"),
-
-    // Bright ANSI colors (8-15)
-    brightBlack: get("--vscode-terminal-ansiBrightBlack"),
-    brightRed: get("--vscode-terminal-ansiBrightRed"),
-    brightGreen: get("--vscode-terminal-ansiBrightGreen"),
-    brightYellow: get("--vscode-terminal-ansiBrightYellow"),
-    brightBlue: get("--vscode-terminal-ansiBrightBlue"),
-    brightMagenta: get("--vscode-terminal-ansiBrightMagenta"),
-    brightCyan: get("--vscode-terminal-ansiBrightCyan"),
-    brightWhite: get("--vscode-terminal-ansiBrightWhite"),
-
-    // Keep the overview ruler lane visually invisible.
-    overviewRulerBorder: "transparent",
-
-    // Hide xterm's scrollbar slider visuals (we only keep a 1px lane for FitAddon math).
-    scrollbarSliderBackground: "transparent",
-    scrollbarSliderHoverBackground: "transparent",
-    scrollbarSliderActiveBackground: "transparent",
-  };
-}
-
-/**
- * Detect whether the current VS Code theme is a high-contrast theme.
- * High-contrast themes add `vscode-high-contrast` or `vscode-high-contrast-light` class to body.
- */
-function isHighContrastTheme(): boolean {
-  return (
-    document.body.classList.contains("vscode-high-contrast") ||
-    document.body.classList.contains("vscode-high-contrast-light")
-  );
-}
-
-/**
- * Get the appropriate minimum contrast ratio based on the current theme.
- * High-contrast themes use 7 (WCAG AAA), normal themes use 4.5 (WCAG AA).
- */
-function getMinimumContrastRatio(): number {
-  return isHighContrastTheme() ? 7 : 4.5;
-}
-
-/**
- * Apply the current theme to all terminal instances.
- */
-function applyThemeToAll(): void {
-  const theme = getXtermTheme(terminalLocation);
-  const contrastRatio = getMinimumContrastRatio();
-  for (const instance of terminals.values()) {
-    instance.terminal.options.theme = theme;
-    instance.terminal.options.minimumContrastRatio = contrastRatio;
-  }
-}
-
-/**
- * Start watching for VS Code theme changes via MutationObserver on body class.
- * See: docs/design/theme-integration.md#§4
- */
-function startThemeWatcher(): void {
-  if (themeObserver) {
-    return;
-  }
-
-  themeObserver = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (mutation.type === "attributes" && mutation.attributeName === "class") {
-        applyBodyBackground(terminalLocation);
-        applyThemeToAll();
-        break;
-      }
-    }
-  });
-
-  themeObserver.observe(document.body, {
-    attributes: true,
-    attributeFilter: ["class"],
-  });
-}
-
-// ─── Error Banner ───────────────────────────────────────────────────
-
-/** Auto-dismiss timeout for info-severity banners (ms). */
-const INFO_BANNER_DISMISS_MS = 5000;
-
-/**
- * Display an error/warning/info banner in the terminal container.
- * Severity determines the background color: error=red, warn=amber, info=blue.
- * Info banners auto-dismiss after 5 seconds. All banners have a dismiss button.
- */
-function showErrorBanner(message: string, severity: "error" | "warn" | "info"): void {
-  const containerEl = document.getElementById("terminal-container");
-  if (!containerEl) {
-    return;
-  }
-
-  const banner = document.createElement("div");
-  banner.className = `error-banner error-banner-${severity}`;
-
-  const messageSpan = document.createElement("span");
-  messageSpan.className = "error-banner-message";
-  messageSpan.textContent = message;
-  banner.appendChild(messageSpan);
-
-  const dismissBtn = document.createElement("button");
-  dismissBtn.className = "error-banner-dismiss";
-  dismissBtn.textContent = "\u00d7"; // ×
-  dismissBtn.addEventListener("click", () => {
-    banner.remove();
-  });
-  banner.appendChild(dismissBtn);
-
-  containerEl.insertBefore(banner, containerEl.firstChild);
-
-  // Auto-dismiss info banners after 5 seconds
-  if (severity === "info") {
-    setTimeout(() => {
-      if (banner.parentElement) {
-        banner.remove();
-      }
-    }, INFO_BANNER_DISMISS_MS);
+  if (themeManager.updateLocation(location)) {
+    themeManager.applyToAll(terminals.values());
   }
 }
 
@@ -653,56 +474,20 @@ function ackChars(count: number, tabId: string): void {
 // ─── Resize Handler ─────────────────────────────────────────────────
 
 /**
- * Fit a single terminal to its container using getBoundingClientRect().
- *
- * FitAddon uses getComputedStyle(parentElement) which can return stale values
- * during CSS flex layout transitions (e.g., sidebar expand). This custom
- * implementation uses getBoundingClientRect() which returns actual rendered
- * pixel dimensions, matching VS Code's own approach.
- *
- * See: microsoft/vscode xtermTerminal.ts — getXtermScaledDimensions()
+ * Fit a single terminal to its container.
+ * Delegates to XtermFitService for dimension calculation (which owns all xterm private API access),
+ * then performs the resize if needed.
  */
 function fitTerminal(instance: TerminalInstance): void {
-  if (!instance.terminal.element?.parentElement) {
+  const parentElement = instance.terminal.element?.parentElement;
+  if (!parentElement) {
     return;
   }
 
-  const core = (instance.terminal as any)._core;
-  const dims = core?._renderService?.dimensions;
-  if (!dims || dims.css.cell.width === 0 || dims.css.cell.height === 0) {
-    return;
+  const result = fitTerminalCore(instance.terminal, parentElement);
+  if (result) {
+    instance.terminal.resize(result.cols, result.rows);
   }
-
-  // Use getBoundingClientRect for actual rendered dimensions (not stale getComputedStyle)
-  const parentRect = instance.terminal.element.parentElement.getBoundingClientRect();
-  if (parentRect.width === 0 || parentRect.height === 0) {
-    return;
-  }
-
-  // Account for xterm element padding
-  const xtermStyle = window.getComputedStyle(instance.terminal.element);
-  const paddingTop = Number.parseInt(xtermStyle.getPropertyValue("padding-top"), 10) || 0;
-  const paddingBottom = Number.parseInt(xtermStyle.getPropertyValue("padding-bottom"), 10) || 0;
-  const paddingLeft = Number.parseInt(xtermStyle.getPropertyValue("padding-left"), 10) || 0;
-  const paddingRight = Number.parseInt(xtermStyle.getPropertyValue("padding-right"), 10) || 0;
-
-  // Scrollbar width: same logic as FitAddon — scrollback=0 → 0, else overviewRuler.width || 14
-  const scrollbarWidth =
-    instance.terminal.options.scrollback === 0 ? 0 : instance.terminal.options.overviewRuler?.width || 14;
-
-  const availableHeight = parentRect.height - paddingTop - paddingBottom;
-  const availableWidth = parentRect.width - paddingLeft - paddingRight - scrollbarWidth;
-
-  const cols = Math.max(2, Math.floor(availableWidth / dims.css.cell.width));
-  const rows = Math.max(1, Math.floor(availableHeight / dims.css.cell.height));
-
-  // Only resize if dimensions actually changed
-  if (instance.terminal.rows === rows && instance.terminal.cols === cols) {
-    return;
-  }
-
-  core?._renderService?.clear();
-  instance.terminal.resize(cols, rows);
 }
 
 /**
@@ -852,11 +637,11 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
     macOptionIsMeta: false,
     macOptionClickForcesSelection: true,
     drawBoldTextInBrightColors: true,
-    minimumContrastRatio: getMinimumContrastRatio(),
+    minimumContrastRatio: themeManager.getMinimumContrastRatio(),
     rightClickSelectsWord: false,
     fastScrollSensitivity: 5,
     tabStopWidth: 8,
-    theme: getXtermTheme(terminalLocation),
+    theme: themeManager.getTheme(),
     overviewRuler: { width: 1 },
   });
 
@@ -1356,10 +1141,14 @@ function handleMessage(msg: ExtensionToWebViewMessage): void {
       break;
     }
 
-    case "error":
+    case "error": {
       console.error(`[AnyWhere Terminal] ${msg.severity}: ${msg.message}`);
-      showErrorBanner(msg.message, msg.severity);
+      const containerEl = document.getElementById("terminal-container");
+      if (containerEl) {
+        showBanner(containerEl, msg.message, msg.severity);
+      }
       break;
+    }
 
     default:
       // Silently ignore unknown message types
@@ -1422,9 +1211,9 @@ function handleInit(msg: InitMessage): void {
 function bootstrap(): void {
   const locationAttr = document.body.getAttribute("data-terminal-location");
   if (locationAttr === "sidebar" || locationAttr === "panel" || locationAttr === "editor") {
-    terminalLocation = locationAttr;
+    themeManager.updateLocation(locationAttr);
   }
-  applyBodyBackground(terminalLocation);
+  themeManager.applyBodyBackground();
 
   // Set up IME composition tracking
   document.addEventListener("compositionstart", () => {
@@ -1463,7 +1252,9 @@ function bootstrap(): void {
   });
 
   // Start theme change watcher
-  startThemeWatcher();
+  themeManager.startWatching(() => {
+    themeManager.applyToAll(terminals.values());
+  });
 
   // Signal readiness to the extension host
   vscode.postMessage({ type: "ready" });
