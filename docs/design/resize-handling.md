@@ -63,18 +63,21 @@ For MVP, we use a simplified approach: a single 100ms debounce on all resize eve
 ```mermaid
 flowchart TD
     A["User drags sidebar edge\nor panel divider"] -->|"Many rapid\nresize events"| B["ResizeObserver\ncallback fires"]
-    B --> C["fitAddon.fit()"]
-    C --> D["xterm calculates\nnew cols/rows"]
-    D --> E{"Dimensions\nchanged?"}
-    E -->|No| F["Stop\n(no-op)"]
-    E -->|Yes| G["terminal.onResize fires\n{cols, rows}"]
-    G --> H["Debounce 100ms"]
-    H --> I{"More resize\nevents?"}
-    I -->|"Yes (within 100ms)"| H
-    I -->|"No (100ms elapsed)"| J["postMessage\n{type:'resize', cols, rows}"]
-    J --> K["Extension Host:\nSessionManager.resizeSession()"]
-    K --> L["pty.resize(cols, rows)"]
+    B --> C["Debounce 100ms\n(ResizeCoordinator)"]
+    C --> D{"More resize\nevents?"}
+    D -->|"Yes (within 100ms)"| C
+    D -->|"No (100ms elapsed)"| E["requestAnimationFrame"]
+    E --> F["XtermFitService.fitTerminal()\nusing getBoundingClientRect()"]
+    F --> G{"Dimensions\nchanged?"}
+    G -->|No| H["Return null (no-op)"]
+    G -->|Yes| I["terminal.resize(cols, rows)"]
+    I --> J["terminal.onResize fires"]
+    J --> K["Immediate postMessage\n{type:'resize', cols, rows}"]
+    K --> L["Extension Host:\nSessionManager.resizeSession()"]
+    L --> M["pty.resize(cols, rows)"]
 ```
+
+> **Key difference from the original design**: The debounce is between the ResizeObserver and the fit operation, not between `onResize` and `postMessage`. Once `fitTerminal()` runs and changes dimensions, `terminal.onResize` fires and `postMessage` is sent immediately.
 
 ### Design Rationale
 
@@ -180,12 +183,35 @@ flowchart TD
     ROWS --> MIN
 ```
 
-### MVP Approach
+### Actual Implementation: XtermFitService
 
-For MVP, we rely on `FitAddon.fit()` which already handles DPI-aware calculations internally. The scaled dimension logic is relevant if we need to:
-- Pre-calculate dimensions before the terminal is rendered
-- Implement custom dimension logic for edge cases
-- Override FitAddon behavior for specific scenarios
+The custom `fitTerminal()` in `XtermFitService` replaces `FitAddon.fit()`. It uses `getBoundingClientRect()` for actual rendered pixel dimensions (not `getComputedStyle()` which can return stale values during CSS flex layout transitions):
+
+```typescript
+function fitTerminal(terminal: Terminal, parentElement: HTMLElement): { cols: number; rows: number } | null {
+  const core = (terminal as any)._core;
+  const dims = core?._renderService?.dimensions;
+  if (!dims || dims.css.cell.width === 0 || dims.css.cell.height === 0) return null;
+
+  const parentRect = parentElement.getBoundingClientRect();
+  if (parentRect.width === 0 || parentRect.height === 0) return null;
+
+  // Account for xterm element padding and scrollbar
+  const scrollbarWidth = terminal.options.scrollback === 0 ? 0 : terminal.options.overviewRuler?.width || 14;
+  const availableWidth = parentRect.width - paddingLeft - paddingRight - scrollbarWidth;
+  const availableHeight = parentRect.height - paddingTop - paddingBottom;
+
+  const cols = Math.max(2, Math.floor(availableWidth / dims.css.cell.width));
+  const rows = Math.max(1, Math.floor(availableHeight / dims.css.cell.height));
+
+  if (terminal.rows === rows && terminal.cols === cols) return null;
+
+  core?._renderService?.clear();
+  return { cols, rows };
+}
+```
+
+This is the **only module** that accesses xterm private APIs (`_core`, `_renderService`). If xterm updates break internals, only this file needs fixing.
 
 ---
 
@@ -193,7 +219,7 @@ For MVP, we rely on `FitAddon.fit()` which already handles DPI-aware calculation
 
 ### Problem
 
-When a terminal view is hidden (sidebar collapsed, tab switched), its container has zero or incorrect dimensions. If a resize event fires while hidden, `fitAddon.fit()` would calculate 0 columns/0 rows. When the view becomes visible again, the terminal must be re-fitted to its actual container size.
+When a terminal view is hidden (sidebar collapsed, tab switched), its container has zero or incorrect dimensions. If a resize event fires while hidden, `fitTerminal()` would calculate 0 columns/0 rows (and return null). When the view becomes visible again, the terminal must be re-fitted to its actual container size.
 
 ### Visibility Handling Flow
 
@@ -202,91 +228,106 @@ sequenceDiagram
     participant User
     participant VSCode as VS Code
     participant WV as WebView
-    participant RH as ResizeHandler
-    participant FA as FitAddon
+    participant RC as ResizeCoordinator
+    participant XFS as XtermFitService
     participant EXT as Extension Host
 
     User->>VSCode: Collapse sidebar
     Note over WV: Container dimensions → 0×0
-    Note over RH: ResizeObserver fires with 0×0
-    RH->>RH: Ignore (width or height is 0)
+    Note over RC: ResizeObserver fires with 0×0
+    RC->>RC: pendingResize = true (skip fit)
 
     Note over WV: retainContextWhenHidden = true<br/>WebView DOM stays alive<br/>but container invisible
 
     User->>VSCode: Expand sidebar
     Note over WV: Container gets real dimensions
 
-    VSCode->>WV: visibility change event
+    VSCode->>WV: { type: 'viewShow' }
 
-    RH->>RH: pendingResize = true
-    RH->>FA: fitAddon.fit()
-    FA->>FA: Measure container dimensions
-    FA->>FA: Calculate cols/rows
+    RC->>RC: pendingResize = true? → flush
+    RC->>RC: requestAnimationFrame
+    RC->>XFS: fitTerminal(instance) for each leaf
+    XFS->>XFS: getBoundingClientRect() + calculate cols/rows
 
-    Note over FA: terminal.onResize fires<br/>with correct dimensions
+    Note over XFS: terminal.onResize fires<br/>with correct dimensions
 
     WV->>EXT: { type: 'resize', cols, rows }
     EXT->>EXT: pty.resize(cols, rows)
     Note over EXT: PTY now has correct<br/>terminal dimensions
 ```
 
-### Implementation
+### Implementation: ResizeCoordinator
+
+There is one `ResizeCoordinator` instance (not per-terminal). It observes the shared `#terminal-container` element and fits all leaf terminals in the active tab's split tree:
 
 ```typescript
-class ResizeHandler {
+class ResizeCoordinator {
   private pendingResize = false;
-  private resizeTimeout: number | undefined;
-  private observer: ResizeObserver;
+  private fitTimeout: number | undefined;
+  private splitFitTimeout: number | undefined;
+  private observer: ResizeObserver | undefined;
 
   constructor(
-    private container: HTMLElement,
-    private fitAddon: FitAddon,
-    private onResize: (cols: number, rows: number) => void,
-  ) {
+    private fitTerminal: (instance: FittableInstance) => void,
+    private getState: () => { activeTabId, terminals, tabLayouts },
+    private onLocationChange: (location: TerminalLocation) => void,
+  ) {}
+
+  setup(container: HTMLElement): void {
     this.observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const { width, height } = entry.contentRect;
-
-        // Skip if container is not visible (collapsed)
         if (width === 0 || height === 0) {
           this.pendingResize = true;
           return;
         }
-
+        this.onLocationChange(inferLocationFromSize(width, height));
         this.debouncedFit();
       }
     });
-
     this.observer.observe(container);
   }
 
-  /**
-   * Called when the view becomes visible again.
-   * Flushes any pending resize that was deferred while hidden.
-   */
-  onViewShow(): void {
-    if (this.pendingResize) {
-      this.pendingResize = false;
-      // Use requestAnimationFrame to ensure layout is complete
-      requestAnimationFrame(() => {
-        this.fitAddon.fit();
-      });
-    }
-  }
-
-  private debouncedFit(): void {
-    clearTimeout(this.resizeTimeout);
-    this.resizeTimeout = window.setTimeout(() => {
-      this.fitAddon.fit();
+  debouncedFit(): void {
+    clearTimeout(this.fitTimeout);
+    this.fitTimeout = window.setTimeout(() => {
+      requestAnimationFrame(() => this.fitAllTerminals());
     }, 100);
   }
 
-  dispose(): void {
-    this.observer.disconnect();
-    clearTimeout(this.resizeTimeout);
+  debouncedFitAllLeaves(tabId: string): void {
+    clearTimeout(this.splitFitTimeout);
+    this.splitFitTimeout = window.setTimeout(() => {
+      // Fit all leaves in the tab's split tree
+    }, 100);
+  }
+
+  onViewShow(): void {
+    if (this.pendingResize) {
+      this.pendingResize = false;
+      requestAnimationFrame(() => {
+        // Fit all leaves in active tab
+      });
+    }
   }
 }
 ```
+
+### Split-Pane Resize
+
+When a split resize handle is dragged, `debouncedFitAllLeaves(tabId)` is called (separate timer from `debouncedFit()` to avoid clobbering). This fits all leaf terminals in the tab's split tree after the drag settles.
+
+### Location Inference
+
+`inferLocationFromSize()` determines the terminal location based on container aspect ratio:
+
+```typescript
+private static inferLocationFromSize(width: number, height: number): TerminalLocation {
+  return width > height * 1.2 ? 'panel' : 'sidebar';
+}
+```
+
+This updates the ThemeManager's location for correct background color fallback when the view is moved between sidebar and panel.
 
 ---
 
@@ -294,7 +335,7 @@ class ResizeHandler {
 
 ### Problem
 
-Before the webview container is measured (before `terminal.open()` and `fitAddon.fit()`), the PTY process needs initial dimensions. The PTY is spawned in the extension host before the webview reports its actual size.
+Before the webview container is measured (before `terminal.open()` and `fitTerminal()`), the PTY process needs initial dimensions. The PTY is spawned in the extension host before the webview reports its actual size.
 
 ### Default Dimensions
 
@@ -319,8 +360,8 @@ sequenceDiagram
     EXT->>WV: { type: 'init', ... }
 
     WV->>WV: terminal.open(container)
-    WV->>FA: fitAddon.fit()
-    Note over FA: Measures container<br/>Actual size: 120×35
+    WV->>WV: XtermFitService.fitTerminal()
+    Note over WV: Measures container<br/>Actual size: 120×35
 
     WV->>EXT: { type: 'resize', cols: 120, rows: 35 }
     EXT->>PTY: pty.resize(120, 35)
@@ -339,27 +380,26 @@ The brief window where the PTY has 80×30 dimensions (before the webview reports
 sequenceDiagram
     participant DOM as Container DIV
     participant RO as ResizeObserver
-    participant RH as ResizeHandler
-    participant FA as FitAddon
+    participant RC as ResizeCoordinator
+    participant XFS as XtermFitService
     participant XT as xterm.Terminal
-    participant MH as MessageHandler
     participant EXT as Extension Host
     participant SM as SessionManager
     participant PTY as node-pty
 
     DOM->>RO: Container dimensions change
-    RO->>RH: ResizeObserver callback
-    RH->>RH: Start/reset 100ms debounce timer
+    RO->>RC: ResizeObserver callback
+    RC->>RC: inferLocationFromSize() → update theme location
+    RC->>RC: Start/reset 100ms debounce timer
 
-    Note over RH: 100ms passes with no new events...
+    Note over RC: 100ms passes with no new events...
 
-    RH->>FA: fitAddon.fit()
-    FA->>FA: Measure container<br/>Calculate cols/rows
-    FA->>XT: Set terminal dimensions
+    RC->>RC: requestAnimationFrame
+    RC->>XFS: fitTerminal(terminal, parentElement)
+    XFS->>XFS: getBoundingClientRect()<br/>Calculate cols/rows from cell dims
+    XFS->>XT: terminal.resize(cols, rows)
     XT->>XT: Reflow text if cols changed
-    XT->>MH: terminal.onResize({cols, rows})
-
-    MH->>EXT: postMessage({<br/>  type: 'resize',<br/>  tabId: 'abc',<br/>  cols: 120, rows: 35<br/>})
+    XT->>EXT: terminal.onResize → postMessage({<br/>  type: 'resize',<br/>  tabId: 'abc',<br/>  cols: 120, rows: 35<br/>})
 
     EXT->>SM: resizeSession('abc', 120, 35)
     SM->>SM: session = sessions.get('abc')
@@ -392,7 +432,7 @@ flowchart TD
     F --> G["Start 100ms timer"]
     G --> H{"New resize\nwithin 100ms?"}
     H -->|Yes| F
-    H -->|No| I["fitAddon.fit()"]
+    H -->|No| I["fitTerminal()"]
     I --> J{"Dimensions\nactually changed?"}
     J -->|No| K["No-op\n(onResize won't fire)"]
     J -->|Yes| L["onResize fires\npostMessage to extension"]
@@ -411,19 +451,19 @@ flowchart TD
 
 **Scenario**: User drags the sidebar edge continuously for 2 seconds.
 
-**Handling**: ResizeObserver fires ~120 times. Each callback resets the 100ms debounce timer. Only the final resize (100ms after drag stops) triggers `fitAddon.fit()` and `pty.resize()`. The terminal "jumps" to the final size rather than reflowing text 120 times.
+**Handling**: ResizeObserver fires ~120 times. Each callback resets the 100ms debounce timer. Only the final resize (100ms after drag stops) triggers `fitTerminal()` and `pty.resize()`. The terminal "jumps" to the final size rather than reflowing text 120 times.
 
 ### 2. Font Size Change
 
 **Scenario**: User changes `anywhereTerminal.fontSize` in settings.
 
-**Handling**: Font size change is applied via `terminal.options.fontSize`. This changes cell dimensions, so `fitAddon.fit()` must be called afterward to recalculate cols/rows. The `configUpdate` handler explicitly calls fit after font changes.
+**Handling**: Font size change is applied via `terminal.options.fontSize`. This changes cell dimensions, so `fitTerminal()` must be called afterward to recalculate cols/rows. The `TerminalFactory.applyConfig()` method explicitly calls `fitTerminal()` after font changes.
 
 ### 3. Multiple Terminal Tabs
 
 **Scenario**: 3 terminal tabs exist, only one is visible.
 
-**Handling**: ResizeObserver is on the shared `#terminal-container` element. On resize, only the active terminal's `fitAddon.fit()` is called. Hidden terminals (display: none) get `pendingResize = true` and are fitted on tab switch.
+**Handling**: ResizeObserver is on the shared `#terminal-container` element. On resize, `ResizeCoordinator.fitAllTerminals()` fits all leaf terminals in the active tab's split tree. Hidden tabs get `pendingResize = true` and are fitted when the view becomes visible via `onViewShow()`.
 
 ### 4. Window Maximization
 
@@ -442,27 +482,18 @@ flowchart TD
 ## 10. Interface Definition
 
 ```typescript
-interface IResizeHandler {
-  /**
-   * Notify the handler that the view has become visible.
-   * Triggers deferred resize if pending.
-   */
+// XtermFitService — pure function, no class
+function fitTerminal(
+  terminal: Terminal,
+  parentElement: HTMLElement
+): { cols: number; rows: number } | null;
+
+// ResizeCoordinator — one instance, not per-terminal
+class ResizeCoordinator {
+  setup(container: HTMLElement): void;
+  debouncedFit(): void;
+  debouncedFitAllLeaves(tabId: string): void;
   onViewShow(): void;
-
-  /**
-   * Force an immediate fit (no debounce).
-   * Used after font size changes or tab switches.
-   */
-  fitImmediate(): void;
-
-  /**
-   * Get current terminal dimensions.
-   */
-  getDimensions(): { cols: number; rows: number };
-
-  /**
-   * Clean up the ResizeObserver and timers.
-   */
   dispose(): void;
 }
 ```
@@ -472,13 +503,15 @@ interface IResizeHandler {
 ## 11. File Location
 
 ```
-src/webview/utils/ResizeHandler.ts
+src/webview/resize/XtermFitService.ts   — Custom fitTerminal() using xterm _core._renderService
+src/webview/resize/ResizeCoordinator.ts — ResizeObserver, debounce, visibility, location inference
 ```
 
 ### Dependencies
-- `@xterm/addon-fit` — `FitAddon` for calculating and applying dimensions
-- Browser APIs — `ResizeObserver`, `requestAnimationFrame`
+- `@xterm/xterm` — `Terminal` type (XtermFitService accesses `_core._renderService` private API)
+- Browser APIs — `ResizeObserver`, `requestAnimationFrame`, `getBoundingClientRect()`
 
 ### Dependents
-- `TerminalWebviewApp` (main.ts) — creates ResizeHandler per terminal instance
-- `TerminalManager` — calls `onViewShow()` on tab switch, `fitImmediate()` on config change
+- `main.ts` — creates ResizeCoordinator, passes fitTerminal delegate
+- `TerminalFactory` — calls `fitTerminal()` for individual terminal fits
+- `SplitTreeRenderer` — calls `debouncedFitAllLeaves()` after split resize

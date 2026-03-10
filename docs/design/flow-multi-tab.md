@@ -26,7 +26,7 @@ stateDiagram-v2
         Rendering: xterm.js visible (display: block)
         Rendering: Receives PTY output in real-time
         Rendering: Has keyboard focus
-        Rendering: fitAddon active
+        Rendering: Resize-aware (via ResizeCoordinator)
     }
 
     state Background {
@@ -44,19 +44,13 @@ stateDiagram-v2
 sequenceDiagram
     actor User
     participant WV as WebView
-    participant TM as TabManager
-    participant MH as MessageHandler
     participant Ext as Extension Host
     participant SM as SessionManager
     participant PTY as New PtySession
 
     User->>WV: Click "+" button in tab bar
 
-    Note over Ext: _canCreateTerminal():<br/>validate slot availability<br/>(max terminal limit check)
-
-    WV->>TM: handleAddTab()
-    TM->>MH: send({ type: 'createTab' })
-    MH->>Ext: postMessage({ type: 'createTab' })
+    WV->>Ext: postMessage({ type: 'createTab' })
 
     Ext->>SM: createSession(viewId, webview)
     SM->>SM: findAvailableNumber() → 2
@@ -67,44 +61,20 @@ sequenceDiagram
 
     Ext->>WV: postMessage({ type: 'tabCreated', tabId: 'xyz-456', name: 'Terminal 2' })
 
-    WV->>TM: addTab('xyz-456', 'Terminal 2')
-    Note over TM: 1. Create tab element in tab bar
-    Note over TM: 2. Create container div for xterm
+    Note over WV: MessageRouter dispatches to onTabCreated
+    WV->>WV: TerminalFactory.createTerminal('xyz-456', 'Terminal 2', config, false)
+    Note over WV: 1. Create container div
+    Note over WV: 2. new Terminal() + loadAddon(FitAddon, WebLinksAddon, WebGL)
+    Note over WV: 3. terminal.open(container)
+    Note over WV: 4. setTimeout(0) → fitTerminal() → terminal.focus()
 
-    WV->>WV: createTerminal('xyz-456', 'Terminal 2', isActive: true)
-    Note over WV: 3. new Terminal() instance
-    Note over WV: 4. terminal.open(container)
-    Note over WV: 5. requestAnimationFrame →<br/>fitAddon.fit() → terminal.focus()
-
-    WV->>TM: switchTab('xyz-456')
-    Note over TM: 6. Hide previous tab's container
-    Note over TM: 7. Show new tab's container
-    Note over TM: 8. Update tab bar active state
-    Note over TM: 9. Focus new terminal
+    WV->>WV: switchTab('xyz-456')
+    Note over WV: 5. Hide previous tab via SplitTreeRenderer
+    Note over WV: 6. Show new tab container
+    Note over WV: 7. requestAnimationFrame → fitAllAndFocus()
+    Note over WV: 8. Update tab bar
 
     WV->>Ext: postMessage({ type: 'switchTab', tabId: 'xyz-456' })
-    Ext->>SM: switchActiveSession(viewId, 'xyz-456')
-
-    Note over Ext: Send stateUpdate for reconciliation
-    Ext->>WV: postMessage({ type: 'stateUpdate', tabs, activeTabId })
-```
-
-### Max Terminal Limit
-
-Before creating a new terminal, the extension checks `_canCreateTerminal()` to validate slot availability:
-
-```typescript
-private _canCreateTerminal(): boolean {
-  const maxTabs = this.configManager.get('maxTabs', 10);
-  const currentCount = this.sessionManager.getSessionCountForView(this.viewId);
-  if (currentCount >= maxTabs) {
-    vscode.window.showWarningMessage(
-      `Maximum terminal limit (${maxTabs}) reached for this view.`
-    );
-    return false;
-  }
-  return true;
-}
 ```
 
 ### Tab Focus Management
@@ -113,8 +83,7 @@ When a new tab is created, focus is managed using `requestAnimationFrame` to ens
 
 ```typescript
 requestAnimationFrame(() => {
-  fitAddon.fit();
-  terminal.focus();
+  factory.fitAllAndFocus(tabId, instance);
 });
 ```
 
@@ -126,22 +95,18 @@ This pattern ensures the terminal container has been laid out before fitting and
 sequenceDiagram
     actor User
     participant WV as WebView
-    participant TM as TabManager
     participant Ext as Extension Host
     participant SM as SessionManager
 
     Note over WV: Currently active: Terminal 2 (xyz-456)
 
     User->>WV: Click tab "Terminal 1"
-    WV->>TM: switchTab('abc-123')
+    WV->>WV: switchTab('abc-123')
 
-    Note over TM: 1. Hide Terminal 2 container<br/>(display: none)
-    Note over TM: 2. Show Terminal 1 container<br/>(display: block)
-    Note over TM: 3. Update tab bar UI<br/>(active class)
-    
-    WV->>WV: fitAddon.fit() on Terminal 1
-    Note over WV: Resize needed: container dimensions<br/>may have changed while tab was hidden
-    WV->>WV: Terminal 1 xterm.focus()
+    Note over WV: 1. SplitTreeRenderer.hideTabContainer(current)
+    Note over WV: 2. SplitTreeRenderer.showTabContainer('abc-123')
+    Note over WV: 3. requestAnimationFrame →<br/>fitAllAndFocus('abc-123')
+    Note over WV: 4. Update tab bar UI
 
     WV->>Ext: postMessage({ type: 'switchTab', tabId: 'abc-123' })
     Ext->>SM: switchActiveSession(viewId, 'abc-123')
@@ -153,7 +118,7 @@ sequenceDiagram
 
 ### Resize-on-Switch Detail
 
-When switching tabs, the newly active tab may need a resize because the container dimensions could have changed while the tab was hidden (e.g., the user resized the sidebar while a different tab was active). The `fitAddon.fit()` call recalculates cols/rows based on current container dimensions and emits a resize message if they differ from the previous values.
+When switching tabs, the newly active tab may need a resize because the container dimensions could have changed while the tab was hidden (e.g., the user resized the sidebar while a different tab was active). `factory.fitAllAndFocus()` calls `XtermFitService.fitTerminal()` on all leaf terminals in the tab's split tree, recalculating cols/rows and emitting resize messages for any that changed.
 
 ### Background Tab Output
 
@@ -176,21 +141,13 @@ flowchart TD
 sequenceDiagram
     actor User
     participant WV as WebView
-    participant TM as TabManager
     participant Ext as Extension Host
     participant SM as SessionManager
     participant PTY as PtySession
 
     User->>WV: Click "x" on Terminal 1 tab
 
-    alt Only one tab remaining
-        Note over WV: Optionally: prevent closing last tab<br/>OR close and show "No terminals" placeholder
-    end
-
-    WV->>TM: closeTab('abc-123')
-    TM->>Ext: postMessage({ type: 'closeTab', tabId: 'abc-123' })
-
-    Note over Ext: Queue destroySession() call<br/>(Promise chain serialization<br/>prevents race conditions)
+    WV->>Ext: postMessage({ type: 'closeTab', tabId: 'abc-123' })
 
     Ext->>SM: destroySession('abc-123')
     Note over SM: Add to _terminalBeingKilled Set<br/>(prevents infinite kill↔onExit loop)
@@ -203,37 +160,21 @@ sequenceDiagram
 
     Ext->>WV: postMessage({ type: 'tabRemoved', tabId: 'abc-123' })
 
-    Note over Ext: Send stateUpdate for reconciliation
-    Ext->>WV: postMessage({ type: 'stateUpdate', tabs, activeTabId })
+    Note over WV: MessageRouter dispatches to onTabRemoved
+    WV->>WV: removeTerminal('abc-123')
+    Note over WV: 1. Dispose xterm instance (terminal.dispose())
+    Note over WV: 2. Remove container div from DOM
+    Note over WV: 3. Delete from store + flowControl
+    Note over WV: 4. SplitTreeRenderer.removeTab() for cleanup
 
-    WV->>TM: removeTab('abc-123')
-    Note over TM: 1. Remove tab element from tab bar
-    Note over TM: 2. Dispose xterm instance<br/>(terminal.dispose())
-    Note over TM: 3. Remove container div from DOM
-    Note over TM: 4. If closed tab was active:<br/>→ focus next/last available tab
-
-    opt Was active tab
-        TM->>TM: switchTab(nextTabId)
-        Note over TM: Auto-focus: next tab if available,<br/>otherwise last tab
+    alt Was active tab and other tabs exist
+        WV->>WV: switchTab(lastRemainingTabId)
+    end
+    alt Was active tab and no tabs remain
+        WV->>Ext: postMessage({ type: 'createTab' })
+        Note over WV: Auto-request new tab<br/>when last tab is closed
     end
 ```
-
-### Operation Queue for Tab Close
-
-Tab close operations are serialized through a Promise chain to prevent race conditions (pattern from reference project):
-
-```typescript
-private _operationQueue: Promise<void> = Promise.resolve();
-
-closeTab(tabId: string): void {
-  this._operationQueue = this._operationQueue.then(async () => {
-    await this.sessionManager.destroySession(tabId);
-    this.webview.postMessage({ type: 'tabRemoved', tabId });
-  });
-}
-```
-
-This ensures that if multiple tabs are closed rapidly (e.g., "close all"), each destroy completes before the next begins.
 
 ### Kill Tracking: `_terminalBeingKilled`
 
@@ -260,20 +201,25 @@ async destroySession(id: string): Promise<void> {
 
 Without this guard, `kill()` triggers `onExit()`, which might call `destroySession()` again.
 
-### State Sync After Mutations
+### Split Pane Lifecycle
 
-After tab mutations (create, close), the extension sends a `stateUpdate` message so the WebView can reconcile its state:
+Split pane operations (create, close, restructure) are handled by `SplitTreeRenderer`. When a tab has split panes:
+- Closing a split pane removes it from the split tree and restructures the layout
+- The `WebviewStateStore` persists layout state via `vscode.setState()`
+- `ResizeCoordinator.debouncedFitAllLeaves()` refits all remaining panes after restructure
+
+### Auto-Create on Last Tab Close
+
+When the last tab is closed, the webview automatically requests a new tab:
 
 ```typescript
-// After create or close
-webview.postMessage({
-  type: 'stateUpdate',
-  tabs: this.sessionManager.getTabsForView(viewId),
-  activeTabId: this.sessionManager.getActiveSessionId(viewId),
-});
+if (remaining.length > 0) {
+  switchTab(remaining[remaining.length - 1]);
+} else {
+  store.activeTabId = null;
+  vscode.postMessage({ type: 'createTab' });
+}
 ```
-
-This ensures the WebView's tab state matches the extension's session state, even if messages were lost or delivered out of order.
 
 ## Tab Number Recycling
 

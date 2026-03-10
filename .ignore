@@ -1,0 +1,7 @@
+!.agents/skills/cyberk-flow/**
+!.agents/workflows/cyberk-flow/**
+!.agents/workflows/cf-*/**
+!.agents/rules/cyberk-flow/**
+!.opencode/plugins/cyber-flow.ts
+!.opencode/opencode.jsonc
+!.drafts/**

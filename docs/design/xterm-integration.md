@@ -16,27 +16,30 @@ The webview renders terminal output using [xterm.js](https://xtermjs.org/), the 
 ```mermaid
 graph TD
     subgraph WebView["WebView (Browser Sandbox)"]
-        APP["TerminalWebviewApp<br/>(orchestrator)"]
+        MAIN["main.ts<br/>(Composition Root)"]
         
-        APP --> TM["TerminalInstanceMap<br/>Map<tabId, TerminalInstance>"]
+        MAIN --> STORE["WebviewStateStore<br/>Map<tabId, TerminalInstance>"]
+        MAIN --> TF["TerminalFactory"]
+        MAIN --> TH["ThemeManager"]
+        MAIN --> RC["ResizeCoordinator"]
+        MAIN --> FC["FlowControl"]
+        MAIN --> MR["MessageRouter"]
+        MAIN --> SR["SplitTreeRenderer"]
         
-        TM --> T1["TerminalInstance 1"]
-        TM --> T2["TerminalInstance 2"]
+        STORE --> T1["TerminalInstance 1"]
+        STORE --> T2["TerminalInstance 2"]
         
         T1 --> XT1["xterm.Terminal"]
-        T1 --> FA1["FitAddon"]
-        T1 --> WL1["WebLinksAddon"]
         T1 --> C1["Container DIV"]
         
         T2 --> XT2["xterm.Terminal"]
-        T2 --> FA2["FitAddon"]
-        T2 --> WL2["WebLinksAddon"]
         T2 --> C2["Container DIV"]
         
-        APP --> TB["TabBar UI"]
-        APP --> TH["ThemeManager"]
-        APP --> MH["MessageHandler"]
-        APP --> AB["AckBatcher"]
+        TF --> XFS["XtermFitService"]
+        TF --> IH["InputHandler"]
+        RC --> XFS
+        MAIN --> TB["TabBarUtils"]
+        MAIN --> BS["BannerService"]
     end
 ```
 
@@ -47,61 +50,49 @@ interface TerminalInstance {
   id: string;                    // Tab/session ID
   name: string;                  // Display name ("Terminal 1")
   terminal: Terminal;            // xterm.js Terminal
-  fitAddon: FitAddon;           // Auto-resize addon
-  webLinksAddon: WebLinksAddon; // Clickable URLs
   container: HTMLDivElement;     // DOM container element
+  exited: boolean;               // Whether the PTY process has exited
 }
 ```
+
+> **Note**: `fitAddon` and `webLinksAddon` properties were removed in Phase 7. The addons are still loaded into the terminal but references are not stored on the instance since they are never read back.
 
 ---
 
 ## 3. xterm.js Initialization
 
-### Lazy Loading Pattern
+### Module Loading
 
-Following VS Code's pattern (`terminalInstance.ts:772-785`), the xterm.js module is loaded lazily and cached at module level:
+The xterm.js module is loaded via a static `import` at the top of `TerminalFactory.ts`. Since the webview is bundled via esbuild (IIFE format), the import is synchronous. There is no lazy loading or module-level caching — the constructor is available immediately.
 
 ```typescript
-// Module-level cache — shared across all terminal instances
-let xtermModule: typeof import('@xterm/xterm') | undefined;
-
-async function getXtermModule(): Promise<typeof import('@xterm/xterm')> {
-  if (!xtermModule) {
-    xtermModule = await import('@xterm/xterm');
-  }
-  return xtermModule;
-}
+import { Terminal } from '@xterm/xterm';
 ```
-
-In practice, since our webview bundles xterm.js via esbuild (IIFE format), the import is synchronous. The lazy pattern is still useful for:
-- Deferring initialization until the first terminal is needed
-- Consistent pattern if we later split-bundle addons
 
 ### Terminal Constructor Options
 
-Derived from VS Code's `xtermTerminal.ts:189-265`:
+From `TerminalFactory.createTerminal()`:
 
 ```typescript
 const terminal = new Terminal({
   // Core behavior
-  allowProposedApi: true,         // Access to unstable xterm APIs
-  scrollback: config.scrollback,  // Default: 10000
-  cursorBlink: config.cursorBlink,
-  cursorStyle: 'block',           // 'block' | 'underline' | 'bar'
+  scrollback: config.scrollback || 10000,
+  cursorBlink: config.cursorBlink ?? true,
+  cursorStyle: 'block',
   
-  // Font (from VS Code theme CSS variables)
-  fontFamily: getFontFamily(),    // --vscode-editor-font-family or 'monospace'
-  fontSize: getFontSize(),        // anywhereTerminal.fontSize or VS Code editor size
+  // Font (from config + CSS variable fallback)
+  fontFamily: config.fontFamily || getFontFamily(), // CSS var or 'monospace'
+  fontSize: config.fontSize || 14,
   
   // macOS-specific
-  macOptionIsMeta: false,         // Configurable: treat Option as Meta key
+  macOptionIsMeta: false,
   macOptionClickForcesSelection: true,
   
   // Theme
-  theme: getXtermTheme(),         // Built from VS Code CSS variables
+  theme: themeManager.getTheme(),
   
   // Behavior
-  rightClickSelectsWord: false,   // VS Code default: context menu
+  rightClickSelectsWord: false,
   fastScrollSensitivity: 5,
   
   // Tab handling
@@ -109,7 +100,10 @@ const terminal = new Terminal({
   
   // Drawing
   drawBoldTextInBrightColors: true,
-  minimumContrastRatio: 4.5,      // WCAG AA compliance
+  minimumContrastRatio: themeManager.getMinimumContrastRatio(), // 7 for HC, 4.5 for normal
+  
+  // Scrollbar: 1px overview ruler to minimize FitAddon width deduction
+  overviewRuler: { width: 1 },
 });
 ```
 
@@ -120,70 +114,49 @@ const terminal = new Terminal({
 | `scrollback` | `anywhereTerminal.scrollback` | 10000 |
 | `cursorBlink` | `anywhereTerminal.cursorBlink` | true |
 | `fontSize` | `anywhereTerminal.fontSize` → `editor.fontSize` | 14 |
-| `fontFamily` | `terminal.integrated.fontFamily` → `editor.fontFamily` | monospace |
-| `theme` | VS Code CSS variables | (auto from theme) |
-| `macOptionIsMeta` | Future config | false |
-| `minimumContrastRatio` | Fixed | 4.5 |
+| `fontFamily` | `anywhereTerminal.fontFamily` → CSS `--vscode-editor-font-family` | monospace |
+| `theme` | VS Code CSS variables via ThemeManager | (auto from theme) |
+| `macOptionIsMeta` | Fixed | false |
+| `minimumContrastRatio` | ThemeManager (7 for high-contrast, 4.5 for normal) | 4.5 |
+| `overviewRuler.width` | Fixed | 1 (minimizes scrollbar deduction) |
 
 ---
 
 ## 4. Addon Loading Strategy
 
-### Tiered Loading
+### Always Loaded (Synchronous, on Terminal Creation)
 
-Following VS Code's approach (`xtermAddonImporter.ts`), addons are loaded in tiers based on when they're needed:
+All three addons are loaded synchronously during `TerminalFactory.createTerminal()`. There is no lazy loading, addon cache, or tiered strategy — all addons are bundled by esbuild.
 
-```mermaid
-flowchart TD
-    subgraph Tier1["Tier 1: Always Loaded (Sync, on Terminal creation)"]
-        FA["FitAddon<br/>@xterm/addon-fit<br/>Required for resize"]
-        WL["WebLinksAddon<br/>@xterm/addon-web-links<br/>Clickable URLs"]
-    end
-    
-    subgraph Tier2["Tier 2: On-Demand (Async, when needed)"]
-        WG["WebglAddon<br/>@xterm/addon-webgl<br/>GPU rendering"]
-        U11["Unicode11Addon<br/>@xterm/addon-unicode11<br/>Wide char support"]
-        SR["SearchAddon<br/>@xterm/addon-search<br/>Find in terminal"]
-        SZ["SerializeAddon<br/>@xterm/addon-serialize<br/>Copy as HTML"]
-    end
-    
-    subgraph Tier3["Tier 3: Future / Not MVP"]
-        IMG["ImageAddon<br/>@xterm/addon-image<br/>Sixel graphics"]
-        LIG["LigaturesAddon<br/>@xterm/addon-ligatures<br/>Font ligatures"]
-    end
-```
+| Addon | Package | Purpose | Notes |
+|-------|---------|---------|-------|
+| FitAddon | `@xterm/addon-fit` | Auto-resize terminal to container | Loaded but `.fit()` is not called — custom `fitTerminal()` via XtermFitService is used instead |
+| WebLinksAddon | `@xterm/addon-web-links` | Clickable URLs | Always loaded |
+| WebglAddon | `@xterm/addon-webgl` | GPU-accelerated rendering (Retina) | Always attempted; falls back to canvas on failure |
 
-### Addon Cache
+### WebGL Loading Strategy
+
+WebGL is loaded immediately after `terminal.open()`, not on-demand via config. There is no `gpuAcceleration` config setting. The strategy:
+
+1. Attempt `new WebglAddon()` and load it into the terminal
+2. Register `onContextLoss` handler for graceful fallback
+3. If WebGL init fails (sync throw), set `webglFailed = true`
+4. Once `webglFailed` is true, all future terminals skip WebGL (static failure memory)
 
 ```typescript
-// Module-level addon cache (from VS Code pattern)
-const addonCache = new Map<string, any>();
-
-async function loadAddon<T>(name: string, importFn: () => Promise<T>): Promise<T> {
-  let addon = addonCache.get(name);
-  if (!addon) {
-    addon = await importFn();
-    addonCache.set(name, addon);
+if (!this.webglFailed) {
+  try {
+    const webglAddon = new WebglAddon();
+    webglAddon.onContextLoss(() => {
+      webglAddon.dispose();
+      this.webglFailed = true;
+    });
+    terminal.loadAddon(webglAddon);
+  } catch {
+    this.webglFailed = true;
   }
-  return addon;
 }
 ```
-
-### MVP Addons (Phase 1)
-
-| Addon | Package | Loaded When | Purpose |
-|-------|---------|-------------|---------|
-| FitAddon | `@xterm/addon-fit` | Terminal created | Auto-resize terminal to container |
-| WebLinksAddon | `@xterm/addon-web-links` | Terminal created | Make URLs clickable |
-
-### Phase 2+ Addons
-
-| Addon | Package | Loaded When | Purpose |
-|-------|---------|-------------|---------|
-| WebglAddon | `@xterm/addon-webgl` | Config `gpuAcceleration !== 'off'` | GPU-accelerated rendering |
-| Unicode11Addon | `@xterm/addon-unicode11` | Always (small, improves CJK) | Unicode 11 width support |
-| SearchAddon | `@xterm/addon-search` | First Ctrl+F | Find text in terminal |
-| SerializeAddon | `@xterm/addon-serialize` | First "Copy as HTML" | Serialize terminal with formatting |
 
 ---
 
@@ -191,36 +164,32 @@ async function loadAddon<T>(name: string, importFn: () => Promise<T>): Promise<T
 
 ### Decision Logic
 
-Adapted from VS Code (`xtermTerminal.ts:578`):
+There is no `gpuAcceleration` config. WebGL is always attempted unless it has previously failed:
 
 ```mermaid
 flowchart TD
-    A["Terminal attached to DOM"] --> B{"Config:<br/>gpuAcceleration?"}
-    B -->|"'off'"| C["Use DOM Renderer<br/>(default, always works)"]
-    B -->|"'on'"| D["Try WebGL"]
-    B -->|"'auto' (default)"| E{"Previous<br/>WebGL failure?"}
-    E -->|Yes| C
-    E -->|No| D
+    A["Terminal attached to DOM<br/>terminal.open(container)"] --> B{"Previous<br/>WebGL failure?"}
+    B -->|Yes| C["Canvas Renderer<br/>(default)"]
+    B -->|No| D["Try WebGL"]
     
-    D --> F["Load WebglAddon"]
-    F --> G{"WebGL init<br/>success?"}
-    G -->|Yes| H["Use WebGL Renderer"]
-    G -->|No| I["Set suggestedRenderer = 'dom'<br/>(static, affects all instances)"]
-    I --> C
+    D --> E{"WebGL init<br/>success?"}
+    E -->|Yes| F["Use WebGL Renderer"]
+    E -->|No| G["Set webglFailed = true<br/>(static, affects all instances)"]
+    G --> C
     
-    H --> J{"Context<br/>lost event?"}
-    J -->|Yes| K["Dispose WebGL<br/>Fall back to DOM"]
+    F --> H{"Context<br/>lost event?"}
+    H -->|Yes| I["Dispose WebGL<br/>Set webglFailed = true<br/>Fall back to canvas"]
 ```
 
 ### Key Design Decisions
 
-1. **DOM first, upgrade later**: Terminal always opens with DOM renderer via `terminal.open(container)`. WebGL is loaded as an addon after DOM render is working.
+1. **Canvas first, upgrade immediately**: Terminal opens with canvas renderer via `terminal.open(container)`. WebGL is loaded immediately after — not deferred or on-demand.
 
-2. **Static failure memory**: If WebGL fails once, a module-level flag prevents retrying for all future terminal instances. This avoids wasting resources on repeated failures.
+2. **Static failure memory**: The `webglFailed` flag on `TerminalFactory` prevents retrying for all future terminal instances. This avoids wasting resources on repeated failures.
 
-3. **Context loss handling**: WebGL contexts can be lost (browser reclaims GPU memory). The `onContextLoss` event triggers graceful fallback to DOM renderer.
+3. **Context loss handling**: WebGL contexts can be lost (browser reclaims GPU memory). The `onContextLoss` event triggers graceful fallback to canvas renderer.
 
-4. **Dimension refresh**: WebGL and DOM renderers produce slightly different cell dimensions. After renderer switch, `fitAddon.fit()` must be called to recalculate.
+4. **Custom fit replaces FitAddon.fit()**: `XtermFitService.fitTerminal()` uses `getBoundingClientRect()` and xterm's `_core._renderService.dimensions` for dimension calculation. See `resize-handling.md` for details.
 
 ---
 
@@ -230,45 +199,41 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant App as TerminalWebviewApp
+    participant TF as TerminalFactory
     participant DOM as Document
     participant XT as xterm.Terminal
-    participant FA as FitAddon
-    participant WL as WebLinksAddon
-    participant MSG as MessageHandler
+    participant WGL as WebglAddon
+    participant XFS as XtermFitService
 
-    App->>DOM: Create container DIV
+    TF->>DOM: Create container DIV
     Note over DOM: container.style.display =<br/>isActive ? 'block' : 'none'
-    App->>DOM: Append to #terminal-container
+    TF->>DOM: Append to #terminal-container
 
-    App->>XT: new Terminal(options)
-    App->>FA: new FitAddon()
-    App->>WL: new WebLinksAddon()
+    TF->>XT: new Terminal(options incl. theme, contrast ratio)
+    TF->>XT: terminal.loadAddon(new FitAddon())
+    TF->>XT: terminal.loadAddon(new WebLinksAddon())
 
-    App->>XT: terminal.loadAddon(fitAddon)
-    App->>XT: terminal.loadAddon(webLinksAddon)
+    TF->>XT: terminal.open(container)
+    Note over XT: Canvas renderer active
 
-    Note over App: Apply VS Code theme
-    App->>XT: terminal.options.theme = getXtermTheme()
+    alt WebGL not previously failed
+        TF->>WGL: new WebglAddon()
+        TF->>XT: terminal.loadAddon(webglAddon)
+        Note over XT: WebGL renderer active
+    end
 
-    App->>XT: terminal.open(container)
-    Note over XT: DOM renderer active
+    Note over TF: Wire events
+    TF->>XT: terminal.onResize(size => postMessage)
+    TF->>XT: attachCustomKeyEventHandler(createKeyEventHandler)
+    TF->>XT: terminal.onData(data => postMessage)
+    TF->>XT: terminal.onTitleChange(title => updateTabBar)
 
-    App->>App: setTimeout(0)
-    App->>FA: fitAddon.fit()
-    App->>XT: terminal.focus()
+    TF->>TF: Initialize split layout (createLeaf)
+    TF->>TF: store.terminals.set(id, instance)
 
-    Note over App: Wire input events
-    App->>XT: terminal.onData(data => postMessage)
-    App->>XT: terminal.onResize(size => postMessage)
-    App->>XT: attachCustomKeyEventHandler(handler)
-
-    Note over App: Wire resize observer
-    App->>DOM: new ResizeObserver(container)
-
-    Note over App: Store instance
-    App->>App: terminals.set(id, instance)
-    App->>App: renderTabBar()
+    TF->>TF: setTimeout(0)
+    TF->>XFS: fitTerminal(instance)
+    TF->>XT: terminal.focus() (if active)
 ```
 
 ### Event Wiring
@@ -277,17 +242,20 @@ Each terminal instance has these event handlers:
 
 | Event | Handler | Action |
 |-------|---------|--------|
-| `terminal.onData` | `(data) => postMessage({ type: 'input', tabId, data })` | Forward keystrokes to extension |
-| `terminal.onResize` | Debounced: `postMessage({ type: 'resize', tabId, cols, rows })` | Notify extension of dimension change |
-| `terminal.write` callback | `ackBatcher.ack(data.length)` | Flow control acknowledgment |
-| `ResizeObserver` | Debounced: `fitAddon.fit()` | Auto-resize on container change |
-| `customKeyEventHandler` | Clipboard intercept, keybinding filter | See keyboard-input.md |
+| `terminal.onData` | `(data) => postMessage({ type: 'input', tabId, data })` | Forward keystrokes to extension (skipped if `exited`) |
+| `terminal.onResize` | `postMessage({ type: 'resize', tabId, cols, rows })` | Notify extension of dimension change (immediate, not debounced) |
+| `terminal.write` callback | `flowControl.ackChars(data.length, tabId)` | Per-session flow control acknowledgment |
+| `terminal.onTitleChange` | `(title) => instance.name = title; updateTabBar()` | Update tab name from OSC title |
+| `ResizeObserver` | Debounced: `ResizeCoordinator.debouncedFit()` | Auto-resize on container change (100ms debounce) |
+| `customKeyEventHandler` | `createKeyEventHandler(deps)` factory | Clipboard intercept, keybinding filter. See keyboard-input.md |
 
 ### Disposal
 
+Disposal is handled by `removeTerminal()` in `main.ts`:
+
 ```typescript
 function removeTerminal(id: string): void {
-  const instance = terminals.get(id);
+  const instance = store.terminals.get(id);
   if (!instance) return;
 
   // 1. Dispose xterm.js (disposes loaded addons too)
@@ -296,36 +264,39 @@ function removeTerminal(id: string): void {
   // 2. Remove DOM element
   instance.container.remove();
 
-  // 3. Remove from map
-  terminals.delete(id);
+  // 3. Remove from state
+  store.terminals.delete(id);
+  flowControl.delete(id);
 
-  // 4. If this was active tab, switch to next
-  if (activeTabId === id) {
-    const remaining = Array.from(terminals.keys());
+  // 4. Delegate split cleanup to SplitTreeRenderer
+  splitRenderer.removeTab(id);
+  store.persist();
+
+  // 5. Switch to next available tab or request new one
+  if (store.activeTabId === id) {
+    const remaining = Array.from(store.tabLayouts.keys());
     if (remaining.length > 0) {
       switchTab(remaining[remaining.length - 1]);
     } else {
-      activeTabId = null;
+      store.activeTabId = null;
+      vscode.postMessage({ type: 'createTab' });
     }
   }
-
-  // 5. Update tab bar
-  renderTabBar();
+  updateTabBar();
 }
 ```
 
 ### Disposal Guard After Async Operations
 
-Following VS Code's pattern, always check if the terminal was disposed during async operations:
+The `setTimeout(0)` in `createTerminal()` checks if the terminal still exists before fitting:
 
 ```typescript
-loadAddon('webgl', () => import('@xterm/addon-webgl')).then(WebglAddon => {
-  // Guard: terminal may have been disposed during async load
-  if (!terminals.has(id)) return;
-  
-  const addon = new WebglAddon();
-  terminal.loadAddon(addon);
-});
+setTimeout(() => {
+  // Guard: terminal may have been disposed during async delay
+  if (!store.terminals.has(id)) return;
+  fitTerminal(instance);
+  if (isActive) terminal.focus();
+}, 0);
 ```
 
 ---
@@ -334,35 +305,33 @@ loadAddon('webgl', () => import('@xterm/addon-webgl')).then(WebglAddon => {
 
 ### Show/Hide Pattern
 
-Multiple xterm.js instances exist simultaneously, but only one is visible per view. Tab switching is done via CSS `display` property:
+Multiple xterm.js instances exist simultaneously, but only one tab is visible per view. Tab switching is done via CSS `display` property, with split pane container management handled by `SplitTreeRenderer`:
 
 ```typescript
 function switchTab(newTabId: string): void {
-  // Hide current
-  if (activeTabId) {
-    const current = terminals.get(activeTabId);
-    if (current) {
-      current.container.style.display = 'none';
-    }
+  const next = store.terminals.get(newTabId);
+  if (!next) return;
+
+  // Hide current tab (both split container and root container)
+  if (store.activeTabId && store.activeTabId !== newTabId) {
+    splitRenderer.hideTabContainer(store.activeTabId);
+    const current = store.terminals.get(store.activeTabId);
+    if (current) current.container.style.display = 'none';
   }
 
-  // Show new
-  const next = terminals.get(newTabId);
-  if (next) {
-    next.container.style.display = 'block';
-    activeTabId = newTabId;
+  // Show new tab
+  store.activeTabId = newTabId;
+  splitRenderer.showTabContainer(newTabId);
+  next.container.style.display = 'block';
 
-    // Fit after display change (container now has dimensions)
-    requestAnimationFrame(() => {
-      next.fitAddon.fit();
-      next.terminal.focus();
-    });
-  }
+  // Fit all panes in the tab after display change
+  requestAnimationFrame(() => {
+    if (!store.terminals.has(newTabId)) return;
+    factory.fitAllAndFocus(newTabId, next);
+  });
 
-  // Update tab bar active state
-  renderTabBar();
-
-  // Notify extension
+  splitRenderer.updateActivePaneVisual(newTabId);
+  updateTabBar();
   vscode.postMessage({ type: 'switchTab', tabId: newTabId });
 }
 ```
@@ -381,60 +350,48 @@ The memory cost is acceptable for typical tab counts (1-5 terminals).
 
 ## 8. Configuration Updates
 
-When the extension sends a `configUpdate` message, the webview applies changes to all terminal instances:
+When the extension sends a `configUpdate` message, `TerminalFactory.applyConfig()` applies changes to all terminal instances:
 
 ```typescript
-function applyConfig(config: Partial<TerminalConfig>): void {
-  for (const instance of terminals.values()) {
+applyConfig(config: Partial<TerminalConfig>): void {
+  // Persist for future tab creation
+  Object.assign(this.store.currentConfig, config);
+
+  const needsRefit = config.fontSize !== undefined || config.fontFamily !== undefined;
+
+  for (const instance of this.store.terminals.values()) {
     const term = instance.terminal;
+    if (config.fontSize !== undefined) term.options.fontSize = config.fontSize || 14;
+    if (config.cursorBlink !== undefined) term.options.cursorBlink = config.cursorBlink;
+    if (config.scrollback !== undefined) term.options.scrollback = config.scrollback;
+    if (config.fontFamily !== undefined) term.options.fontFamily = config.fontFamily || this.getFontFamily();
 
-    if (config.fontSize !== undefined) {
-      term.options.fontSize = config.fontSize;
-    }
-    if (config.cursorBlink !== undefined) {
-      term.options.cursorBlink = config.cursorBlink;
-    }
-    if (config.scrollback !== undefined) {
-      term.options.scrollback = config.scrollback;
-    }
-
-    // Refit after font size changes
-    if (config.fontSize !== undefined) {
-      instance.fitAddon.fit();
-    }
+    if (needsRefit) this.fitTerminal(instance);
   }
 }
 ```
 
 ### Configuration Change → Refit
 
-Font size changes affect cell dimensions. After applying a font size update:
-1. Set `terminal.options.fontSize`
-2. Call `fitAddon.fit()` — recalculates cols/rows
+Font size or family changes affect cell dimensions. After applying a font update:
+1. Set `terminal.options.fontSize` or `fontFamily`
+2. Call `XtermFitService.fitTerminal()` — recalculates cols/rows via `getBoundingClientRect()`
 3. `terminal.onResize` fires with new dimensions
-4. Debounced postMessage sends new cols/rows to extension
+4. Immediate postMessage sends new cols/rows to extension
 5. Extension calls `pty.resize(cols, rows)`
 
 ---
 
 ## 9. Dependencies (npm packages)
 
-### Runtime (bundled into webview.js)
+### Runtime (all bundled into webview.js)
 
-| Package | Version | Size | Purpose |
-|---------|---------|------|---------|
-| `@xterm/xterm` | ^5.x | ~300KB | Core terminal emulator |
-| `@xterm/addon-fit` | ^0.10.x | ~5KB | Auto-resize |
-| `@xterm/addon-web-links` | ^0.11.x | ~8KB | Clickable URLs |
-
-### Optional (Phase 2+, bundled on demand)
-
-| Package | Version | Size | Purpose |
-|---------|---------|------|---------|
-| `@xterm/addon-webgl` | ^0.18.x | ~150KB | GPU rendering |
-| `@xterm/addon-unicode11` | ^0.8.x | ~15KB | Unicode 11 widths |
-| `@xterm/addon-search` | ^0.15.x | ~10KB | Find in terminal |
-| `@xterm/addon-serialize` | ^0.13.x | ~8KB | Copy as HTML |
+| Package | Version | Purpose |
+|---------|---------|---------|
+| `@xterm/xterm` | ^6.x | Core terminal emulator |
+| `@xterm/addon-fit` | ^0.10.x | Auto-resize (loaded but `.fit()` not called; XtermFitService replaces it) |
+| `@xterm/addon-web-links` | ^0.11.x | Clickable URLs |
+| `@xterm/addon-webgl` | ^0.18.x | GPU rendering (always loaded, not on-demand) |
 
 ### CSS
 
@@ -449,9 +406,16 @@ We use option 1 (explicit `<link>` tag) for better CSP compliance and cacheabili
 ## 10. File Location
 
 ```
-src/webview/main.ts          — Entry point, TerminalWebviewApp class
-src/webview/terminal/         — (Phase 2: extract TerminalManager, InputHandler)
-src/webview/ui/               — (Phase 2: extract TabManager, ThemeManager)
+src/webview/main.ts                     — Composition root (293 LOC), wires all modules
+src/webview/terminal/TerminalFactory.ts — Terminal creation, addon loading, config application
+src/webview/resize/XtermFitService.ts   — Custom fitTerminal() using xterm _core (sole xterm private API user)
+src/webview/resize/ResizeCoordinator.ts — ResizeObserver, debounce, visibility, location inference
+src/webview/theme/ThemeManager.ts       — CSS variable → ITheme, MutationObserver theme watching
+src/webview/state/WebviewStateStore.ts  — Centralized mutable state (terminals, layouts, config)
+src/webview/messaging/MessageRouter.ts  — Typed dispatch table for ExtensionToWebViewMessage
+src/webview/flow/FlowControl.ts         — Per-session ack batching
+src/webview/InputHandler.ts             — createKeyEventHandler() factory
+src/webview/ui/BannerService.ts         — Error/warning/info banner display
+src/webview/split/SplitTreeRenderer.ts  — Split pane DOM rendering and lifecycle
+src/webview/TabBarUtils.ts              — Tab bar data building and rendering
 ```
-
-For MVP (Phase 1), all webview code is in `main.ts` (~400-500 lines). Extraction to separate modules happens in Phase 2 when complexity warrants it.

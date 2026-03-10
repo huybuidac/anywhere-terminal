@@ -28,7 +28,6 @@ AnyWhere Terminal must handle errors gracefully across three boundaries: the Nod
 | 3 | PTY process crash | Medium | Occasional | Single tab stops |
 | 4 | WebView communication failure | Medium | Rare | Temporary message loss |
 | 5 | Output buffer overflow | Low | Rare (heavy output) | Potential lag |
-| 6 | CWD not found | Low | Occasional | Falls back to home directory |
 
 ---
 
@@ -166,42 +165,25 @@ flowchart TD
 - VS Code is shutting down
 - The webview view is being relocated (moved to different container)
 
-**Detection**: `webview.postMessage()` returns `Thenable<boolean>` where `false` means the message was not delivered, or the call throws if the webview is fully disposed.
+**Detection**: `webview.postMessage()` may throw synchronously or the returned thenable may reject.
 
 **Recovery**:
-- Wrap all `postMessage()` calls in try/catch
-- On failure: log warning, stop output buffer timer, clean up orphaned PTY sessions
+- `OutputBuffer` wraps `postMessage()` in try/catch and `.then(undefined, () => {})` 
+- On failure: error is silently swallowed (no logging, no cleanup)
+- Sessions are preserved for potential webview re-creation
+- Output is paused via `pauseOutput()` when the view becomes hidden
 
-**User-Facing Action**: None needed — the view is already gone. Resources are cleaned up silently.
+**User-Facing Action**: None needed — the view is already gone.
 
 ```mermaid
 flowchart TD
     A["Extension calls<br/>webview.postMessage(msg)"] --> B{"Webview still alive?"}
     B -->|Yes| C["Message delivered ✓"]
-    B -->|No / Throws| D["Catch error"]
-    D --> E["Log warning:<br/>'WebView disposed during message'"]
-    E --> F["Stop output buffer timer"]
-    F --> G{"Orphaned PTY sessions?"}
-    G -->|Yes| H["Kill orphaned PTYs<br/>pty.kill()"]
-    H --> I["Remove sessions from<br/>SessionManager"]
-    G -->|No| J["Cleanup complete"]
-    I --> J
+    B -->|No / Throws| D["Catch error (silently)"]
+    D --> E["Sessions preserved<br/>for webview re-creation"]
+    E --> F["Output paused via pauseOutput()"]
 
     style D fill:#553,stroke:#fa6
-```
-
-#### Defensive postMessage Wrapper
-
-```typescript
-private safeSendMessage(webview: vscode.Webview, message: ExtensionToWebViewMessage): boolean {
-  try {
-    webview.postMessage(message);
-    return true;
-  } catch (err) {
-    console.warn('[AnyWhere Terminal] Failed to send message to webview:', err);
-    return false;
-  }
-}
 ```
 
 ---
@@ -231,37 +213,6 @@ flowchart TD
 
     style E fill:#553,stroke:#fa6
     style I fill:#363,stroke:#6f6
-```
-
----
-
-### 3.6 CWD Not Found
-
-**Cause**: The configured working directory or workspace folder no longer exists (deleted, unmounted, network drive disconnected).
-
-**Detection**: `fs.existsSync(cwd)` returns false during PTY spawn.
-
-**Recovery**: Fall back through the CWD resolution chain.
-
-**User-Facing Action**: Log a warning. The terminal opens in the fallback directory — the user sees a different working directory than expected but the terminal works.
-
-```mermaid
-flowchart TD
-    A["Resolve CWD"] --> B{"Custom CWD configured?"}
-    B -->|Yes| C{"Directory exists?"}
-    C -->|Yes| D["Use custom CWD ✓"]
-    C -->|No| E["Log warning:<br/>'Configured CWD not found'"]
-    B -->|No| F{"Workspace folder?"}
-    E --> F
-    F -->|Yes| G{"Directory exists?"}
-    G -->|Yes| H["Use workspace root ✓"]
-    G -->|No| I["Log warning:<br/>'Workspace folder not found'"]
-    F -->|No| J["Use os.homedir()"]
-    I --> J
-
-    style D fill:#363,stroke:#6f6
-    style H fill:#363,stroke:#6f6
-    style J fill:#553,stroke:#fa6
 ```
 
 ---
@@ -374,6 +325,19 @@ webview.postMessage({
 
 The webview can display these as toast notifications or inline messages, styled according to severity.
 
+### 5.5 Error Banner UI (BannerService)
+
+For errors delivered via the `error` message type, the webview displays banners using `BannerService` (`src/webview/ui/BannerService.ts`):
+
+```typescript
+function showBanner(container: HTMLElement, message: string, severity: 'error' | 'warn' | 'info'): void;
+```
+
+- Severity determines CSS class: `error-banner-error` (red), `error-banner-warn` (amber), `error-banner-info` (blue)
+- All banners have a dismiss button (x)
+- Info banners auto-dismiss after 5 seconds (`INFO_BANNER_DISMISS_MS = 5000`)
+- Banners are inserted at the top of `#terminal-container`
+
 ### 5.4 Display Strategy Summary
 
 ```mermaid
@@ -446,6 +410,8 @@ private async safeSendWithRetry(
 
 ## 7. Error Types (TypeScript)
 
+After Phase 7 (dead code removal), only 3 error classes remain. 4 previously documented classes (`SpawnError`, `CwdNotFoundError`, `WebViewDisposedError`, `SessionNotFoundError`) were removed because they were never thrown.
+
 ```typescript
 // === Base Error ===
 
@@ -460,14 +426,10 @@ class AnyWhereTerminalError extends Error {
   }
 }
 
-/** Error code enum for programmatic error handling. */
-const enum ErrorCode {
+/** Error code enum for programmatic error handling. String enum (not const enum). */
+enum ErrorCode {
   PtyLoadFailed = 'PTY_LOAD_FAILED',
   ShellNotFound = 'SHELL_NOT_FOUND',
-  SpawnFailed = 'SPAWN_FAILED',
-  CwdNotFound = 'CWD_NOT_FOUND',
-  WebViewDisposed = 'WEBVIEW_DISPOSED',
-  SessionNotFound = 'SESSION_NOT_FOUND',
   BufferOverflow = 'BUFFER_OVERFLOW',
 }
 
@@ -475,92 +437,22 @@ const enum ErrorCode {
 
 /** node-pty could not be loaded from VS Code's internals. */
 class PtyLoadError extends AnyWhereTerminalError {
-  constructor(
-    /** Paths that were attempted */
-    public readonly attemptedPaths: string[]
-  ) {
-    super(
-      `Could not load node-pty. Tried: ${attemptedPaths.join(', ')}`,
-      ErrorCode.PtyLoadFailed
-    );
+  constructor(public readonly attemptedPaths: string[]) {
+    super(`Could not load node-pty. Tried: ${attemptedPaths.join(', ')}`, ErrorCode.PtyLoadFailed);
     this.name = 'PtyLoadError';
   }
 }
 
 /** No valid shell executable could be found. */
 class ShellNotFoundError extends AnyWhereTerminalError {
-  constructor(
-    /** Shells that were tried */
-    public readonly attemptedShells: string[]
-  ) {
-    super(
-      `No valid shell found. Tried: ${attemptedShells.join(', ')}`,
-      ErrorCode.ShellNotFound
-    );
+  constructor(public readonly attemptedShells: string[]) {
+    super(`No valid shell found. Tried: ${attemptedShells.join(', ')}`, ErrorCode.ShellNotFound);
     this.name = 'ShellNotFoundError';
   }
 }
-
-/** PTY spawn failed for a specific shell. */
-class SpawnError extends AnyWhereTerminalError {
-  constructor(
-    /** Shell path that failed */
-    public readonly shellPath: string,
-    /** Original error from node-pty */
-    public readonly cause: Error
-  ) {
-    super(
-      `Failed to spawn shell: ${shellPath} — ${cause.message}`,
-      ErrorCode.SpawnFailed
-    );
-    this.name = 'SpawnError';
-  }
-}
-
-/** Working directory does not exist. */
-class CwdNotFoundError extends AnyWhereTerminalError {
-  constructor(
-    /** Path that was not found */
-    public readonly cwdPath: string,
-    /** Fallback path that will be used */
-    public readonly fallbackPath: string
-  ) {
-    super(
-      `Working directory not found: ${cwdPath}. Falling back to: ${fallbackPath}`,
-      ErrorCode.CwdNotFound
-    );
-    this.name = 'CwdNotFoundError';
-  }
-}
-
-/** WebView was disposed during a postMessage attempt. */
-class WebViewDisposedError extends AnyWhereTerminalError {
-  constructor(
-    /** View ID that was disposed */
-    public readonly viewId: string
-  ) {
-    super(
-      `WebView disposed: ${viewId}`,
-      ErrorCode.WebViewDisposed
-    );
-    this.name = 'WebViewDisposedError';
-  }
-}
-
-/** A terminal session could not be found. */
-class SessionNotFoundError extends AnyWhereTerminalError {
-  constructor(
-    /** Session ID that was not found */
-    public readonly sessionId: string
-  ) {
-    super(
-      `Session not found: ${sessionId}`,
-      ErrorCode.SessionNotFound
-    );
-    this.name = 'SessionNotFoundError';
-  }
-}
 ```
+
+> **Removed in Phase 7**: `SpawnError`, `CwdNotFoundError`, `WebViewDisposedError`, `SessionNotFoundError` were defined but never thrown. Their error codes (`SPAWN_FAILED`, `CWD_NOT_FOUND`, `WEBVIEW_DISPOSED`, `SESSION_NOT_FOUND`) were also removed from the `ErrorCode` enum.
 
 ---
 
@@ -575,14 +467,11 @@ flowchart TD
     end
 
     subgraph SessionCreate["Session Creation"]
-        B1["createSession()"] --> B2["resolveWorkingDirectory()"]
-        B2 -->|CWD missing| B3["Warn, fallback to homedir"]
-        B2 -->|CWD exists| B4["detectShell()"]
-        B3 --> B4
+        B1["createSession()"] --> B4["detectShell()"]
         B4 --> B5["Shell fallback chain"]
         B5 -->|All fail| B6["ShellNotFoundError<br/>Show error in terminal"]
         B5 -->|Success| B7["pty.spawn()"]
-        B7 -->|Fail| B8["SpawnError<br/>Try next shell"]
+        B7 -->|Fail| B8["Spawn failed<br/>Try next shell"]
         B7 -->|Success| B9["Session active ✓"]
     end
 
@@ -593,7 +482,7 @@ flowchart TD
         C3 -->|No| C5["Normal buffering"]
 
         D1["webview.postMessage()"] --> D2{"Delivered?"}
-        D2 -->|No| D3["Log warning<br/>Cleanup orphaned sessions"]
+        D2 -->|No| D3["Silently swallowed<br/>Sessions preserved"]
         D2 -->|Yes| D4["Message sent ✓"]
 
         E1["pty.onExit()"] --> E2["Flush buffer"]
@@ -618,26 +507,20 @@ flowchart TD
 | Level | When | Example |
 |-------|------|---------|
 | `error` | Unrecoverable failures | node-pty load failure, all shells failed |
-| `warn` | Recovered failures, fallbacks used | Shell fallback, CWD fallback, webview disposed |
+| `warn` | Recovered failures, fallbacks used | Shell fallback, WebGL context loss |
 | `info` | Normal lifecycle events | Session created, session destroyed |
-| `debug` | Diagnostic detail | Shell detection path, message traffic |
 
-### 9.2 Output Channel
+### 9.2 Console Logging
 
-All logs go to the VS Code Output Channel named `"AnyWhere Terminal"`:
+All logging uses `console.*` methods (`console.error`, `console.warn`, `console.log`). There is no VS Code Output Channel or structured logging infrastructure. Log messages are prefixed with `[AnyWhere Terminal]` for identification in the developer tools console.
 
 ```typescript
-const outputChannel = vscode.window.createOutputChannel('AnyWhere Terminal');
+// Extension Host
+console.error('[AnyWhere Terminal] Failed to load node-pty:', err);
 
-function log(level: 'error' | 'warn' | 'info' | 'debug', message: string): void {
-  const timestamp = new Date().toISOString();
-  outputChannel.appendLine(`[${timestamp}] [${level.toUpperCase()}] ${message}`);
-
-  // Also log errors to console for developer tools
-  if (level === 'error') {
-    console.error(`[AnyWhere Terminal] ${message}`);
-  }
-}
+// WebView
+console.warn('[AnyWhere Terminal] WebGL renderer failed, using canvas fallback');
+console.error(`[AnyWhere Terminal] ${msg.severity}: ${msg.message}`);
 ```
 
 ---
@@ -646,15 +529,15 @@ function log(level: 'error' | 'warn' | 'info' | 'debug', message: string): void 
 
 | File | Error Types Defined |
 |------|-------------------|
-| `src/types/errors.ts` | All error classes (`PtyLoadError`, `ShellNotFoundError`, etc.) |
-| `src/pty/PtyManager.ts` | Throws `PtyLoadError`, `ShellNotFoundError`, `SpawnError` |
+| `src/types/errors.ts` | `AnyWhereTerminalError`, `PtyLoadError`, `ShellNotFoundError`, `ErrorCode` enum (3 values) |
+| `src/pty/PtyManager.ts` | Throws `PtyLoadError`, `ShellNotFoundError` |
 | `src/session/SessionManager.ts` | Catches spawn errors, handles session cleanup |
-| `src/providers/TerminalViewProvider.ts` | Catches `postMessage` failures, handles webview disposal |
-| `src/session/OutputBuffer.ts` | Handles buffer overflow, flow control |
+| `src/session/OutputBuffer.ts` | Handles buffer overflow via 1MB cap + FIFO eviction, flow control via watermarks |
+| `src/webview/ui/BannerService.ts` | Error/warning/info banner display in webview |
 
 ### Dependencies
-- `vscode` — for error notifications and output channel
-- `fs` — for shell and CWD validation
+- `vscode` — for error notifications (`showErrorMessage`, `showWarningMessage`)
+- `fs` — for shell validation
 - `node-pty` — source of PTY-related errors
 
 ### Dependents
