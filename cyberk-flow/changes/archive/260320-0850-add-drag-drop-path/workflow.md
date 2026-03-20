@@ -55,20 +55,20 @@
   - [x] Oracle Deep Analysis: `cf-oracle` subagent — 3 blocking, 2 nice-to-fix
 - [x] 6. Findings triage: 4 ACCEPT (fix), 3 REBUT (with rationale)
 - [x] 7. Review Fix Loop _(1 round — R1 fixes applied, re-review: Approve, 0 must-fix)_
-- [ ] 8. Validation
-  - [ ] **🚪 Gate: user approved implementation**
-  - [ ] Extract knowledge
+- [x] 8. Validation
+  - [x] **🚪 Gate: user approved implementation**
+  - [-] Extract knowledge — skipped (inline session)
 
 ## Archive
 
-- [ ] Post-merge sanity check
-- [ ] Retrospective
-- [ ] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
-- [ ] Archive change: `cf_archive` <!-- auto-ticked by script -->
-- [ ] Commit all changes
-- [ ] Deploy Gate _(skip if `project.md` § Commands → Deploy is N/A)_:
-  - [ ] Run deploy command
-  - [ ] Run smoke test
+- [x] Post-merge sanity check — 417/417 tests, type check pass, lint pass
+- [x] Retrospective — 4 review rounds, pivot from pure drag-drop to context menu + Shift+drag, VS Code WebView sandbox limitations discovered empirically
+- [x] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
+- [x] Archive change: `cf_archive` <!-- auto-ticked by script -->
+- [x] Commit all changes — 79859f7
+- [-] Deploy Gate — N/A (no deploy command in project.md):
+  - [-] Run deploy command
+  - [-] Run smoke test
 
 ## Notes
 
