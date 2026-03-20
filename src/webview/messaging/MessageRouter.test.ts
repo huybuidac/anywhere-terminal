@@ -23,6 +23,7 @@ function createMockHandlers(): MessageHandlers {
     onSplitPaneAt: vi.fn(),
     onCtxClear: vi.fn(),
     onError: vi.fn(),
+    onInsertPathEffect: vi.fn(),
   };
 }
 

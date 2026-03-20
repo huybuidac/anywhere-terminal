@@ -26,6 +26,9 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
   /** Callback fired when this provider receives user interaction (message from webview). */
   private _onDidReceiveInteraction: (() => void) | undefined;
 
+  /** Last active pane session ID reported by the webview (for split-pane aware routing). */
+  private _lastActivePaneSessionId: string | undefined;
+
   /** Public accessor for the current webview view. */
   get view(): vscode.WebviewView | undefined {
     return this._view;
@@ -240,6 +243,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
           break;
         }
 
+        case "focus":
+          // Track the active pane session ID for split-pane-aware command routing
+          if (typeof message.activeSessionId === "string") {
+            this._lastActivePaneSessionId = message.activeSessionId;
+          }
+          break;
+
         default:
           // Silently ignore unknown message types
           break;
@@ -370,9 +380,16 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
 
   /**
    * Get the active session ID for this view.
+   *
+   * Prefers the last-known active pane session ID (reported by webview focus events)
+   * for correct split-pane routing. Falls back to the active tab ID from SessionManager.
    * Returns undefined if no sessions exist or no session is active.
    */
   getActiveSessionId(): string | undefined {
+    // Prefer pane-level session ID for split-pane accuracy
+    if (this._lastActivePaneSessionId && this.sessionManager.getSession(this._lastActivePaneSessionId)) {
+      return this._lastActivePaneSessionId;
+    }
     const tabs = this.sessionManager.getTabsForView(this.getViewId());
     const activeTab = tabs.find((t) => t.isActive);
     return activeTab?.id;

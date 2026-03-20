@@ -12,6 +12,7 @@ declare function acquireVsCodeApi(): {
 };
 
 import type { ExtensionToWebViewMessage, InitMessage } from "../types/messages";
+import { DragDropHandler } from "./DragDropHandler";
 import { FlowControl } from "./flow/FlowControl";
 import { createMessageRouter } from "./messaging/MessageRouter";
 import { ResizeCoordinator } from "./resize/ResizeCoordinator";
@@ -36,6 +37,27 @@ const factory = new TerminalFactory({
   postMessage: (msg) => vscode.postMessage(msg),
   onTabBarUpdate: () => updateTabBar(),
   getIsComposing: () => isComposing,
+});
+
+const dragDropHandler = new DragDropHandler({
+  postMessage: (msg) => vscode.postMessage(msg),
+  getActiveSessionId: () => {
+    const tabId = store.activeTabId;
+    if (!tabId) {
+      return null;
+    }
+    // Resolve to the active pane session ID (not the tab ID) for correct split-pane routing
+    return store.tabActivePaneIds.get(tabId) ?? tabId;
+  },
+  getTerminalExited: () => {
+    const tabId = store.activeTabId;
+    if (!tabId) {
+      return true;
+    }
+    const paneId = store.tabActivePaneIds.get(tabId) ?? tabId;
+    const instance = store.terminals.get(paneId);
+    return !instance || instance.exited;
+  },
 });
 
 function updateLocation(location: TerminalLocation): void {
@@ -217,6 +239,18 @@ const routeMessage = createMessageRouter({
       showBanner(containerEl, msg.message, msg.severity);
     }
   },
+  onInsertPathEffect() {
+    const containerEl = document.getElementById("terminal-container");
+    if (!containerEl) {
+      return;
+    }
+    // Remove class first in case animation is still running, then re-add
+    containerEl.classList.remove("path-inserted");
+    // Force reflow to restart animation
+    void containerEl.offsetWidth;
+    containerEl.classList.add("path-inserted");
+    containerEl.addEventListener("animationend", () => containerEl.classList.remove("path-inserted"), { once: true });
+  },
 });
 
 // ─── Init & Bootstrap ───────────────────────────────────────────────
@@ -242,9 +276,57 @@ function handleInit(msg: InitMessage): void {
   const containerEl = document.getElementById("terminal-container");
   if (containerEl) {
     resizeCoordinator.setup(containerEl);
+    dragDropHandler.setup(containerEl);
   }
   store.persist();
   updateTabBar();
+  showDragDropTip();
+}
+
+// ─── Drag-Drop Tip Banner ───────────────────────────────────────────
+
+const DRAG_DROP_TIP_DISMISSED_KEY = "dragDropTipDismissed";
+
+function showDragDropTip(): void {
+  // Check if already dismissed
+  const state = vscode.getState() as Record<string, unknown> | null;
+  if (state?.[DRAG_DROP_TIP_DISMISSED_KEY]) {
+    return;
+  }
+
+  const tipEl = document.getElementById("drag-drop-tip");
+  if (!tipEl) {
+    return;
+  }
+
+  tipEl.className = "drag-drop-tip";
+  tipEl.innerHTML = "";
+
+  const iconSpan = document.createElement("span");
+  iconSpan.textContent = "\ud83d\udca1";
+  iconSpan.style.fontSize = "13px";
+  iconSpan.style.flexShrink = "0";
+  tipEl.appendChild(iconSpan);
+
+  const textSpan = document.createElement("span");
+  textSpan.className = "drag-drop-tip-text";
+  textSpan.textContent =
+    'Drag files from Explorer while holding Shift to insert path, or right-click \u2192 "Insert Path in AnyWhere Terminal".';
+  tipEl.appendChild(textSpan);
+
+  const dismissBtn = document.createElement("button");
+  dismissBtn.className = "drag-drop-tip-dismiss";
+  dismissBtn.textContent = "\u00d7";
+  dismissBtn.title = "Dismiss";
+  dismissBtn.addEventListener("click", () => {
+    tipEl.remove();
+    // Persist dismissal
+    const currentState = (vscode.getState() as Record<string, unknown>) ?? {};
+    vscode.setState({ ...currentState, [DRAG_DROP_TIP_DISMISSED_KEY]: true });
+    // Refit terminal to reclaim the space freed by the dismissed banner
+    resizeCoordinator.debouncedFit();
+  });
+  tipEl.appendChild(dismissBtn);
 }
 
 function bootstrap(): void {
@@ -264,6 +346,14 @@ function bootstrap(): void {
     if (handleTabKeyboardShortcut(e, { terminals: store.terminals, activeTabId: store.activeTabId, switchTab })) {
       e.preventDefault();
     }
+  });
+
+  // Notify Extension Host when user clicks/focuses the terminal.
+  // Sends the resolved active pane session ID so "Insert Path" targets the correct split pane.
+  document.addEventListener("focusin", () => {
+    const tabId = store.activeTabId;
+    const activeSessionId = tabId ? (store.tabActivePaneIds.get(tabId) ?? tabId) : undefined;
+    vscode.postMessage({ type: "focus", activeSessionId });
   });
   window.addEventListener("message", (event: MessageEvent) => {
     const msg = event.data;

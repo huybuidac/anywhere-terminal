@@ -175,6 +175,61 @@ export function getTerminalHtml(
       overflow: hidden;
       padding-left: 8px;
       box-sizing: border-box;
+      position: relative;
+    }
+
+    /* Drag-drop tip banner — dismissable hint at bottom of terminal */
+    .drag-drop-tip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 12px;
+      font-size: 11px;
+      font-family: var(--vscode-font-family, sans-serif);
+      color: var(--vscode-descriptionForeground, #888);
+      background: var(--vscode-editorWidget-background, rgba(30, 30, 30, 0.8));
+      border-top: 1px solid var(--vscode-widget-border, rgba(128, 128, 128, 0.2));
+      flex-shrink: 0;
+      gap: 8px;
+    }
+    .drag-drop-tip-text {
+      flex: 1;
+    }
+    .drag-drop-tip-dismiss {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 16px;
+      height: 16px;
+      border: none;
+      background: transparent;
+      color: var(--vscode-descriptionForeground, #888);
+      cursor: pointer;
+      font-size: 12px;
+      padding: 0;
+      opacity: 0.6;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .drag-drop-tip-dismiss:hover {
+      opacity: 1;
+      background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+    }
+
+    /* Flash effect when path is inserted via context menu —
+       uses ::after overlay to cover xterm content */
+    @keyframes insert-path-flash {
+      0% { opacity: 1; }
+      100% { opacity: 0; }
+    }
+    #terminal-container.path-inserted::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 122, 204, 0.12);
+      pointer-events: none;
+      z-index: 50;
+      animation: insert-path-flash 0.8s ease-out forwards;
     }
 
     /* Split handle — visible 1px separator at rest, full sash on hover */
@@ -238,6 +293,7 @@ export function getTerminalHtml(
 <body data-terminal-location="${location}">
   <div id="tab-bar"></div>
   <div id="terminal-container"></div>
+  <div id="drag-drop-tip"></div>
   <script nonce="${nonce}" src="${scriptUri}"></script>
 </body>
 </html>`;

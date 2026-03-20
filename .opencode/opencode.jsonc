@@ -7,15 +7,15 @@
   "agent": {
     "cf-master": {
       "permission": {
-        "edit": {
-          "docs": "allow"
-        },
+        "read": "allow",
+        "edit": "allow",
         "task": "allow",
         "question": "allow"
       }
     },
     "cf-librarian": {
       "permission": {
+        "read": "allow",
         "edit": {
           "docs": "allow",
           "cyberk-flow": "allow"
@@ -23,8 +23,61 @@
         "task": "allow"
       }
     },
+    "cf-oracle": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review": {
+      "permission": {
+        "read": "allow"
+      }
+    },
+    "cf-review-master": {
+      "permission": {
+        "read": "allow",
+        "edit": "allow",
+        "task": "allow",
+        "question": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review-contracts": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review-data-security": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review-frontend": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review-logic": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-knowledge-extract": {
+      "permission": {
+        "read": "allow",
+        "edit": "allow",
+        "task": "allow",
+        "question": "allow"
+      }
+    },
     "cf-build": {
       "permission": {
+        "read": "allow",
         "edit": "allow",
         "task": "allow",
         "question": "allow"
@@ -32,20 +85,16 @@
     },
     "cf-plan": {
       "permission": {
-        "edit": {
-          "docs": "allow",
-          "cyberk-flow": "allow"
-        },
+        "read": "allow",
+        "edit": "allow",
         "task": "allow",
         "question": "allow"
       }
     },
     "cf-archive": {
       "permission": {
-        "edit": {
-          "docs": "allow",
-          "cyberk-flow": "allow"
-        },
+        "read": "allow",
+        "edit": "allow",
         "task": "allow",
         "question": "allow"
       }

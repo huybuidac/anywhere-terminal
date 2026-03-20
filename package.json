@@ -227,6 +227,10 @@
       {
         "command": "anywhereTerminal.ctx.splitHorizontal",
         "title": "Split Horizontal"
+      },
+      {
+        "command": "anywhereTerminal.insertPath",
+        "title": "Insert Path in AnyWhere Terminal"
       }
     ],
     "menus": {
@@ -302,6 +306,12 @@
           "command": "anywhereTerminal.ctx.splitHorizontal",
           "when": "webviewSection == 'splitPane'",
           "group": "split@3"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "anywhereTerminal.insertPath",
+          "group": "anywhereTerminal@1"
         }
       ],
       "commandPalette": [

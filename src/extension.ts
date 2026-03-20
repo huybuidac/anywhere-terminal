@@ -5,6 +5,7 @@ import { loadNodePty } from "./pty/PtyManager";
 import { SessionManager } from "./session/SessionManager";
 import { affectsTerminalConfig, readTerminalConfig, readTerminalSettings } from "./settings/SettingsReader";
 import { PtyLoadError } from "./types/errors";
+import { escapePathForShell } from "./utils/shellEscape";
 
 export function activate(context: vscode.ExtensionContext) {
   // Validate node-pty availability early — show user-facing error if missing
@@ -297,6 +298,43 @@ export function activate(context: vscode.ExtensionContext) {
         safePostMessage(panel.webview, configUpdateMessage);
       }
     }),
+  );
+
+  // ─── Insert Path Command (Explorer context menu) ────────────────
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "anywhereTerminal.insertPath",
+      (uri: vscode.Uri | undefined, uris: vscode.Uri[] | undefined) => {
+        // Resolve file URIs: multi-select (uris) or single-select (uri) from Explorer
+        const targets = uris && uris.length > 0 ? uris : uri ? [uri] : [];
+        if (targets.length === 0) {
+          return;
+        }
+
+        // Escape each path and join with spaces, append trailing space
+        const escaped = targets.map((u) => escapePathForShell(u.fsPath)).join(" ");
+
+        // Route to the focused sidebar/panel provider's active pane session.
+        // getActiveSessionId() correctly resolves split panes (via webview state).
+        // NOTE: Editor terminals are not targeted by this command — they don't
+        // expose an active session ID to the Extension Host. This is a known
+        // limitation; the Shift+drag approach covers editor terminals directly.
+        const provider = getFocusedProvider();
+        const activeSessionId = provider.getActiveSessionId();
+        if (!activeSessionId) {
+          return;
+        }
+
+        sessionManager.writeToSession(activeSessionId, `${escaped} `);
+
+        // Send visual feedback to the webview (brief flash effect)
+        const view = provider.view;
+        if (view) {
+          safePostMessage(view.webview, { type: "insertPathEffect" });
+        }
+      },
+    ),
   );
 
   // ─── Focus & Move Commands ──────────────────────────────────────

@@ -12,6 +12,7 @@ import type {
   ErrorMessage,
   ExitMessage,
   ExtensionToWebViewMessage,
+  InsertPathEffectMessage,
   OutputMessage,
   RestoreMessage,
   SplitPaneAtMessage,
@@ -45,6 +46,7 @@ export interface MessageHandlers {
   onSplitPaneAt(msg: SplitPaneAtMessage): void;
   onCtxClear(msg: CtxClearMessage): void;
   onError(msg: ErrorMessage): void;
+  onInsertPathEffect(msg: InsertPathEffectMessage): void;
 }
 
 // ─── Factory ────────────────────────────────────────────────────────
@@ -103,6 +105,9 @@ export function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionT
         break;
       case "error":
         handlers.onError(msg);
+        break;
+      case "insertPathEffect":
+        handlers.onInsertPathEffect(msg);
         break;
       case "init":
         // init is handled directly by main.ts — not routed

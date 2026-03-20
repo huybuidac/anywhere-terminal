@@ -94,6 +94,13 @@ export interface AckMessage {
   tabId: string;
 }
 
+/** Terminal view received focus (click/keyboard). Reports active pane session ID for split-pane routing. */
+export interface FocusMessage {
+  type: "focus";
+  /** Active pane session ID (resolved from split layout, not tab ID) */
+  activeSessionId?: string;
+}
+
 /**
  * All messages that can be sent from the WebView to the Extension Host.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
@@ -108,7 +115,8 @@ export type WebViewToExtensionMessage =
   | ClearMessage
   | AckMessage
   | RequestSplitSessionMessage
-  | RequestCloseSplitPaneMessage;
+  | RequestCloseSplitPaneMessage
+  | FocusMessage;
 
 // ─── Extension → WebView Messages ───────────────────────────────────
 
@@ -242,6 +250,11 @@ export interface CtxClearMessage {
   sessionId?: string;
 }
 
+/** Visual feedback: a file path was inserted into the terminal via context menu. */
+export interface InsertPathEffectMessage {
+  type: "insertPathEffect";
+}
+
 /**
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
@@ -261,4 +274,5 @@ export type ExtensionToWebViewMessage =
   | CloseSplitPaneMessage
   | CloseSplitPaneByIdMessage
   | SplitPaneAtMessage
-  | CtxClearMessage;
+  | CtxClearMessage
+  | InsertPathEffectMessage;
