@@ -35,15 +35,20 @@ flowchart TD
     I -->|"Yes"| J["Copy to clipboard\nClear selection\nreturn false"]
     I -->|"No"| K["return true\n(xterm sends \\x03\n→ SIGINT)"]
 
-    H -->|"V"| L["Read clipboard\nPaste via terminal.paste()\nreturn false"]
+    H -->|"V"| L["return false\n(xterm handles paste natively\nvia browser paste event)"]
 
-    H -->|"K"| M{"Clear\nenabled?"}
-    M -->|"Yes"| N["Clear terminal\nreturn false"]
-    M -->|"No"| O["return true"]
+    H -->|"K"| M["Clear terminal\npostMessage clear notification\nreturn false"]
 
     H -->|"A"| P["Select all\nreturn false"]
 
+    H -->|"Backspace"| R["Send \\x15 (line kill)\nvia postMessage input\nreturn false"]
+
     H -->|"Other"| Q["return true\n(let VS Code/xterm handle)"]
+
+    D -->|"No"| S{"Escape key?"}
+    S -->|"Yes + selection"| T["Clear selection\nreturn false"]
+    S -->|"Yes + no selection"| U["return true\n(pass to shell)"]
+    S -->|"No"| F
 
     style J fill:#354,stroke:#6a6
     style K fill:#543,stroke:#a66
@@ -53,51 +58,66 @@ flowchart TD
 
 ### Handler Implementation
 
+The input handler is a factory function `createKeyEventHandler()` that returns a closure for `attachCustomKeyEventHandler`. All dependencies are injected for testability:
+
 ```typescript
-terminal.attachCustomKeyEventHandler((event: KeyboardEvent): boolean => {
-  // Only process keydown events
-  if (event.type !== 'keydown') return true;
+function createKeyEventHandler(deps: KeyHandlerDeps): (event: KeyboardEvent) => boolean {
+  const { terminal, clipboard, postMessage, getActiveTabId, getIsComposing, isMac } = deps;
 
-  // Don't intercept during IME composition
-  if (isComposing) return true;
+  return (event: KeyboardEvent): boolean => {
+    if (event.type !== 'keydown') return true;
+    if (getIsComposing()) return true;
 
-  const isMac = navigator.platform.includes('Mac');
-  const modifier = isMac ? event.metaKey : event.ctrlKey;
-
-  if (!modifier) return true; // No modifier key — let xterm handle
-
-  switch (event.key.toLowerCase()) {
-    case 'c':
+    // Escape: clear selection if present, otherwise pass through
+    if (event.key === 'Escape') {
       if (terminal.hasSelection()) {
-        // Copy selected text to clipboard
-        navigator.clipboard.writeText(terminal.getSelection());
         terminal.clearSelection();
-        return false; // Prevent xterm from processing
-      }
-      // No selection: let xterm handle → sends \x03 (SIGINT)
-      return true;
-
-    case 'v':
-      handlePaste(terminal);
-      return false;
-
-    case 'k':
-      if (config.enableCmdK) {
-        terminal.clear(); // Clears scrollback, keeps current line
         return false;
       }
       return true;
+    }
 
-    case 'a':
-      terminal.selectAll();
-      return false;
+    const modifier = isMac ? event.metaKey : event.ctrlKey;
+    if (!modifier) return true;
 
-    default:
-      // All other Cmd/Ctrl combos: let xterm handle
-      // (xterm passes unrecognized combos back to VS Code)
-      return true;
-  }
-});
+    switch (event.key.toLowerCase()) {
+      case 'c':
+        if (terminal.hasSelection()) {
+          const selection = terminal.getSelection();
+          if (selection && clipboard) {
+            clipboard.writeText(selection);
+          }
+          terminal.clearSelection();
+          return false;
+        }
+        return true; // No selection → \x03 (SIGINT)
+
+      case 'v':
+        // Let xterm handle paste natively via browser paste event.
+        // Returning false tells xterm to skip its keydown processing,
+        // but the browser's native Cmd+V still fires the paste event.
+        return false;
+
+      case 'k':
+        terminal.clear();
+        postMessage({ type: 'clear', tabId: getActiveTabId() });
+        return false;
+
+      case 'a':
+        terminal.selectAll();
+        return false;
+
+      case 'backspace':
+        // Cmd+Delete (macOS) / Ctrl+Backspace: line kill
+        // Sends \x15 (Ctrl+U) via raw PTY input
+        postMessage({ type: 'input', tabId: getActiveTabId(), data: '\x15' });
+        return false;
+
+      default:
+        return true;
+    }
+  };
+}
 ```
 
 ---
@@ -161,71 +181,25 @@ sequenceDiagram
 
 ---
 
-## 4. Paste Flow with Bracketed Paste Mode
+## 4. Paste Handling
 
-### What is Bracketed Paste Mode?
+### Native xterm Paste
 
-Bracketed paste mode is a terminal feature (DEC private mode 2004) that wraps pasted text with escape sequences so the shell can distinguish pasted text from typed text. This prevents issues where pasted multi-line text is interpreted as multiple commands.
+Paste is handled entirely by xterm.js's native browser paste event. There is no custom `handlePaste()` function — it was removed as dead code in Phase 7.
 
-| Sequence | Meaning |
-|---|---|
-| `\x1b[200~` | Start of paste |
-| `\x1b[201~` | End of paste |
-
-Modern shells (zsh, bash 4.4+, fish) enable this mode automatically. When active, pasted text like `echo hello\necho world` is treated as a single paste event rather than two commands.
-
-### Paste Decision Flow
+When Cmd+V is pressed, the custom key event handler returns `false`. This tells xterm to skip its own keydown processing, but the browser's native Cmd+V still fires a paste event on xterm's internal textarea. xterm captures this event, normalizes the pasted text, handles bracketed paste mode internally, and routes the data through `onData`.
 
 ```mermaid
 flowchart TD
-    A["Cmd+V pressed"] --> B["Read clipboard\nnavigator.clipboard.readText()"]
-    B --> C{"Clipboard\nempty?"}
-    C -->|Yes| D["No-op"]
-    C -->|No| E["Normalize line endings\nreplace \\r?\\n with \\r"]
-    E --> F{"Bracketed paste\nmode active?"}
-    F -->|Yes| G["Wrap with brackets:\n\\x1b[200~ + text + \\x1b[201~"]
-    F -->|No| H["Use raw text"]
-    G --> I["terminal.paste(wrappedText)"]
-    H --> I
-    I --> J["onData fires\n→ postMessage to extension\n→ pty.write()"]
+    A["Cmd+V pressed"] --> B["customKeyEventHandler\nreturns false"]
+    B --> C["Browser fires native paste event\non xterm's internal textarea"]
+    C --> D["xterm.js processes paste event"]
+    D --> E["xterm handles bracketed paste mode\nand line ending normalization internally"]
+    E --> F["onData fires with pasted text"]
+    F --> G["postMessage to extension\n→ pty.write()"]
 ```
 
-### Bracketed Paste Implementation
-
-```typescript
-async function handlePaste(terminal: Terminal): Promise<void> {
-  try {
-    const text = await navigator.clipboard.readText();
-    if (!text) return;
-
-    // Normalize line endings: \r\n or \n → \r (terminal convention)
-    const normalized = text.replace(/\r?\n/g, '\r');
-
-    // Check if bracketed paste mode is active
-    if (terminal.modes.bracketedPasteMode) {
-      // Wrap paste with bracket sequences
-      // The shell will see these markers and treat the content as a paste
-      const bracketedText = `\x1b[200~${normalized}\x1b[201~`;
-      terminal.paste(bracketedText);
-    } else {
-      terminal.paste(normalized);
-    }
-  } catch (err) {
-    // Clipboard API may fail due to permissions or focus
-    console.warn('Clipboard read failed:', err);
-  }
-}
-```
-
-### Line Ending Normalization
-
-| Source Format | Terminal Format | Reason |
-|---|---|---|
-| `\n` (Unix) | `\r` | Terminal input uses CR, not LF |
-| `\r\n` (Windows) | `\r` | Strip the LF, keep CR |
-| `\r` (old Mac) | `\r` | Already correct |
-
-This normalization is critical. Without it, pasting multi-line text from a file or web page would produce incorrect behavior — the shell expects `\r` (carriage return) as the line separator in input.
+This approach matches VS Code's built-in terminal and avoids the complexity of manual clipboard reading, line ending normalization, and bracketed paste wrapping.
 
 ---
 
@@ -384,12 +358,14 @@ We maintain an explicit list of key combinations to intercept. Everything else p
 | Enter | → xterm.js → `\r` → shell | Execute command |
 | Arrow keys | → xterm.js → escape sequences → shell | Navigation |
 | Tab | → xterm.js → `\t` → shell | Completion |
-| Escape | → xterm.js → `\x1b` → shell | Cancel/escape |
+| Escape (with selection) | **Intercepted** | Clear selection |
+| Escape (no selection) | → xterm.js → `\x1b` → shell | Cancel/escape |
 | Ctrl+C (no selection) | → xterm.js → `\x03` → shell | SIGINT |
 | Cmd+C (with selection) | **Intercepted** | Copy to clipboard |
-| Cmd+V | **Intercepted** | Paste from clipboard |
-| Cmd+K | **Intercepted** (configurable) | Clear terminal |
+| Cmd+V | **Intercepted** (returns false) | xterm handles paste natively |
+| Cmd+K | **Intercepted** (always) | Clear terminal + postMessage clear |
 | Cmd+A | **Intercepted** | Select all |
+| Cmd+Backspace | **Intercepted** | Line kill (`\x15` via postMessage input) |
 | Cmd+P | → VS Code | File picker (not intercepted) |
 | Cmd+Shift+P | → VS Code | Command palette (not intercepted) |
 | Cmd+B | → VS Code | Toggle sidebar (not intercepted) |
@@ -406,10 +382,11 @@ When `customKeyEventHandler` returns `true` for a Cmd combo that xterm.js doesn'
 ### Input-Related Settings
 
 | Setting | Type | Default | Description |
-|---|---|---|
-| `anywhereTerminal.enableCmdK` | `boolean` | `true` | Whether Cmd+K clears the terminal |
+|---|---|---|---|
 | `anywhereTerminal.macOptionIsMeta` | `boolean` | `false` | Treat Option key as Meta (for programs like emacs) |
 | `anywhereTerminal.macOptionClickForcesSelection` | `boolean` | `true` | Option+click forces text selection (vs. sending escape) |
+
+> **Note**: `enableCmdK` was described in earlier designs but was never implemented. Cmd+K always clears the terminal. There is no config to disable it.
 
 ### macOptionIsMeta Behavior
 
@@ -454,30 +431,36 @@ When `macOptionIsMeta` is `false` (default):
 
 ## 10. Interface Definition
 
+The input handler uses a factory function pattern, not a class:
+
 ```typescript
-interface IInputHandler {
-  /**
-   * Attach key event handler and clipboard handling to a terminal.
-   * Should be called once per terminal instance after terminal.open().
-   */
-  attach(terminal: Terminal, tabId: string): void;
-
-  /**
-   * Detach handlers. Called when terminal is disposed.
-   */
-  detach(): void;
-
-  /**
-   * Update input configuration (e.g., enableCmdK changed).
-   */
-  updateConfig(config: Partial<InputConfig>): void;
+/** Abstraction over the system clipboard for dependency injection. */
+interface ClipboardProvider {
+  readText(): Promise<string>;
+  writeText(text: string): Promise<void>;
 }
 
-interface InputConfig {
-  enableCmdK: boolean;
-  macOptionIsMeta: boolean;
-  macOptionClickForcesSelection: boolean;
+/** Minimal terminal surface used by the key handler. */
+interface TerminalLike {
+  hasSelection(): boolean;
+  getSelection(): string;
+  clearSelection(): void;
+  clear(): void;
+  selectAll(): void;
 }
+
+/** Dependencies injected into the key event handler factory. */
+interface KeyHandlerDeps {
+  terminal: TerminalLike;
+  clipboard: ClipboardProvider | undefined;
+  postMessage: (msg: unknown) => void;
+  getActiveTabId: () => string | null;
+  getIsComposing: () => boolean;
+  isMac: boolean;
+}
+
+/** Factory: returns a function for attachCustomKeyEventHandler. */
+function createKeyEventHandler(deps: KeyHandlerDeps): (event: KeyboardEvent) => boolean;
 ```
 
 ---
@@ -485,13 +468,12 @@ interface InputConfig {
 ## 11. File Location
 
 ```
-src/webview/terminal/InputHandler.ts
+src/webview/InputHandler.ts
 ```
 
 ### Dependencies
-- `@xterm/xterm` — `Terminal` type, `attachCustomKeyEventHandler`, `terminal.modes`
-- Browser APIs — `navigator.clipboard`, `compositionstart`/`compositionend` events
+- Browser APIs — `navigator.clipboard` (via injected `ClipboardProvider`)
+- IME state via injected `getIsComposing()` callback
 
 ### Dependents
-- `TerminalWebviewApp` (main.ts) — creates InputHandler and attaches to each terminal
-- `TerminalManager` — passes config updates to InputHandler
+- `TerminalFactory.attachInputHandler()` — creates and attaches the handler to each terminal

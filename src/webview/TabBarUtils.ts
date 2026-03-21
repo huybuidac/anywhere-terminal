@@ -3,9 +3,49 @@
 // Extracted for testability. Pure DOM rendering function with dependency injection.
 // See: docs/design/flow-multi-tab.md#Data-Routing-Architecture
 
+import type { SplitNode } from "./SplitModel";
+import type { TerminalInstance } from "./state/WebviewStateStore";
+
 /** Minimal terminal info needed for tab bar rendering. */
 export interface TabInfo {
   name: string;
+  /** Whether the terminal process has exited. */
+  exited?: boolean;
+}
+
+/** Minimal store interface for buildTabBarData — avoids importing full WebviewStateStore. */
+export interface TabBarDataSource {
+  tabLayouts: Map<string, SplitNode>;
+  tabActivePaneIds: Map<string, string>;
+  terminals: Map<string, TerminalInstance>;
+}
+
+/**
+ * Build a filtered terminals map for tab bar rendering.
+ * Only includes "root" tabs (those with a tabLayout entry).
+ * For split tabs, uses the active pane's name.
+ */
+export function buildTabBarData(store: TabBarDataSource): Map<string, TabInfo> {
+  const tabTerminals = new Map<string, TabInfo>();
+  for (const [tabId, layout] of store.tabLayouts) {
+    if (layout.type === "branch") {
+      // Split tab — show active pane's name and exited state
+      const activePaneId = store.tabActivePaneIds.get(tabId) ?? tabId;
+      const activeInstance = store.terminals.get(activePaneId);
+      const rootInstance = store.terminals.get(tabId);
+      tabTerminals.set(tabId, {
+        name: activeInstance?.name ?? rootInstance?.name ?? tabId,
+        exited: (activeInstance ?? rootInstance)?.exited,
+      });
+    } else {
+      // Single pane tab
+      const instance = store.terminals.get(tabId);
+      if (instance) {
+        tabTerminals.set(tabId, { name: instance.name, exited: instance.exited });
+      }
+    }
+  }
+  return tabTerminals;
 }
 
 /** Dependencies for renderTabBar — injected for testability. */
@@ -36,12 +76,12 @@ export function renderTabBar(deps: RenderTabBarDeps): void {
   // 2. Create tab elements
   for (const [id, instance] of terminals) {
     const tab = document.createElement("div");
-    tab.className = `tab-item${id === activeTabId ? " active" : ""}`;
+    tab.className = `tab-item${id === activeTabId ? " active" : ""}${instance.exited ? " tab-exited" : ""}`;
     tab.dataset.tabId = id;
 
     const nameSpan = document.createElement("span");
     nameSpan.className = "tab-name";
-    nameSpan.textContent = instance.name;
+    nameSpan.textContent = instance.exited ? `${instance.name} (exited)` : instance.name;
     tab.appendChild(nameSpan);
 
     const closeBtn = document.createElement("button");

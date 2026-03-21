@@ -1,6 +1,6 @@
 // src/webview/InputHandler.ts — Extracted input handling logic for testability
 //
-// Provides the custom key event handler factory and paste helper.
+// Provides the custom key event handler factory.
 // Dependencies are injected to enable unit testing without browser/webview APIs.
 //
 // See: docs/design/keyboard-input.md, docs/design/flow-clipboard.md
@@ -18,7 +18,6 @@ export interface TerminalLike {
   hasSelection(): boolean;
   getSelection(): string;
   clearSelection(): void;
-  paste(data: string): void;
   clear(): void;
   selectAll(): void;
 }
@@ -32,29 +31,6 @@ export interface KeyHandlerDeps {
   getIsComposing: () => boolean;
   /** Whether running on macOS (uses metaKey). Pass `navigator.platform.includes("Mac")`. */
   isMac: boolean;
-}
-
-// ─── Paste Helper ───────────────────────────────────────────────────
-
-/**
- * Handle paste — reads from clipboard and delegates to terminal.paste()
- * which handles bracketed paste mode and line ending normalization natively.
- *
- * See: docs/design/keyboard-input.md#§4
- */
-export async function handlePaste(terminal: TerminalLike, clipboard: ClipboardProvider | undefined): Promise<void> {
-  if (!clipboard?.readText) {
-    console.warn("[AnyWhere Terminal] Clipboard API not available");
-    return;
-  }
-  try {
-    const text = await clipboard.readText();
-    if (text) {
-      terminal.paste(text);
-    }
-  } catch (err) {
-    console.warn("[AnyWhere Terminal] Clipboard read failed:", err);
-  }
 }
 
 // ─── Key Event Handler Factory ──────────────────────────────────────
@@ -78,6 +54,15 @@ export function createKeyEventHandler(deps: KeyHandlerDeps): (event: KeyboardEve
 
     // Don't intercept during IME composition
     if (getIsComposing()) {
+      return true;
+    }
+
+    // Escape key: clear selection if present, otherwise pass through to shell
+    if (event.key === "Escape") {
+      if (terminal.hasSelection()) {
+        terminal.clearSelection();
+        return false;
+      }
       return true;
     }
 
@@ -120,6 +105,14 @@ export function createKeyEventHandler(deps: KeyHandlerDeps): (event: KeyboardEve
 
       case "a":
         terminal.selectAll();
+        return false;
+
+      case "backspace":
+        // Cmd+Delete (macOS) / Ctrl+Backspace: kill current input line
+        // Sends Ctrl+U (\x15) — the Unix line-kill control character.
+        // Must use postMessage (raw PTY input) instead of terminal.paste()
+        // to avoid bracketed paste wrapping which would print ^U literally.
+        postMessage({ type: "input", tabId: getActiveTabId(), data: "\x15" });
         return false;
 
       default:

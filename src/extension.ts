@@ -1,9 +1,26 @@
 import * as vscode from "vscode";
 import { TerminalEditorProvider } from "./providers/TerminalEditorProvider";
 import { TerminalViewProvider } from "./providers/TerminalViewProvider";
+import { loadNodePty } from "./pty/PtyManager";
 import { SessionManager } from "./session/SessionManager";
+import { affectsTerminalConfig, readTerminalConfig, readTerminalSettings } from "./settings/SettingsReader";
+import { PtyLoadError } from "./types/errors";
+import { escapePathForShell } from "./utils/shellEscape";
 
 export function activate(context: vscode.ExtensionContext) {
+  // Validate node-pty availability early — show user-facing error if missing
+  try {
+    loadNodePty();
+  } catch (err) {
+    if (err instanceof PtyLoadError) {
+      vscode.window.showErrorMessage(
+        `AnyWhere Terminal: Failed to load node-pty. Requires VS Code >= 1.109.0. ${err.message}`,
+      );
+    } else {
+      console.error("[AnyWhere Terminal] Unexpected error loading node-pty:", err);
+    }
+    // Continue activation — individual createSession calls will fail gracefully
+  }
   // Create shared SessionManager (singleton)
   const sessionManager = new SessionManager();
 
@@ -70,13 +87,27 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
     const viewId = provider.getViewId();
-    const newSessionId = sessionManager.createSession(viewId, view.webview);
-    const newSession = sessionManager.getSession(newSessionId);
-    if (newSession) {
+    const settings = readTerminalSettings();
+    try {
+      const newSessionId = sessionManager.createSession(viewId, view.webview, {
+        shell: settings.shell,
+        shellArgs: settings.shellArgs,
+        cwd: settings.cwd,
+      });
+      const newSession = sessionManager.getSession(newSessionId);
+      if (newSession) {
+        safePostMessage(view.webview, {
+          type: "tabCreated",
+          tabId: newSessionId,
+          name: newSession.name,
+        });
+      }
+    } catch (err) {
+      console.error("[AnyWhere Terminal] Failed to create terminal:", err);
       safePostMessage(view.webview, {
-        type: "tabCreated",
-        tabId: newSessionId,
-        name: newSession.name,
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to create new terminal",
+        severity: "error",
       });
     }
   };
@@ -153,33 +184,157 @@ export function activate(context: vscode.ExtensionContext) {
   // These are triggered from right-click on split panes via webview/context menus.
   // VS Code passes the data-vscode-context values as the command argument.
 
-  /** Post a message to whichever provider's webview is visible. */
-  const postToVisibleWebview = (message: unknown): void => {
-    // Try both providers — only the one whose webview contains the element will match
+  /**
+   * Find the provider that owns a given session ID.
+   * Context menu commands receive paneSessionId from data-vscode-context;
+   * use it to target the correct provider instead of getFocusedProvider().
+   */
+  const getProviderBySessionId = (sessionId: string): TerminalViewProvider | undefined => {
+    const session = sessionManager.getSession(sessionId);
+    if (!session) {
+      return undefined;
+    }
     for (const provider of [sidebarProvider, panelProvider]) {
-      const view = provider.view;
-      if (view?.visible) {
-        safePostMessage(view.webview, message);
+      if (provider.getViewId() === session.viewId) {
+        return provider;
       }
+    }
+    return undefined;
+  };
+
+  /**
+   * Resolve the correct provider for a context menu command.
+   * Prefers the provider owning the right-clicked session (paneSessionId),
+   * falls back to getFocusedProvider() when context is unavailable.
+   */
+  const getCtxProvider = (ctx?: { paneSessionId?: string }): TerminalViewProvider => {
+    if (ctx?.paneSessionId) {
+      const provider = getProviderBySessionId(ctx.paneSessionId);
+      if (provider) {
+        return provider;
+      }
+    }
+    return getFocusedProvider();
+  };
+
+  /** Post a message to the correct provider's webview based on context. */
+  const postToCtxWebview = (ctx: { paneSessionId?: string } | undefined, message: unknown): void => {
+    const provider = getCtxProvider(ctx);
+    const view = provider.view;
+    if (view) {
+      safePostMessage(view.webview, message);
     }
   };
 
   context.subscriptions.push(
     vscode.commands.registerCommand("anywhereTerminal.ctx.closePane", (ctx: { paneSessionId?: string }) => {
       if (ctx?.paneSessionId) {
-        postToVisibleWebview({ type: "closeSplitPaneById", sessionId: ctx.paneSessionId });
+        postToCtxWebview(ctx, { type: "closeSplitPaneById", sessionId: ctx.paneSessionId });
       }
     }),
     vscode.commands.registerCommand("anywhereTerminal.ctx.splitVertical", (ctx: { paneSessionId?: string }) => {
       if (ctx?.paneSessionId) {
-        postToVisibleWebview({ type: "splitPaneAt", direction: "vertical", sourcePaneId: ctx.paneSessionId });
+        postToCtxWebview(ctx, { type: "splitPaneAt", direction: "vertical", sourcePaneId: ctx.paneSessionId });
       }
     }),
     vscode.commands.registerCommand("anywhereTerminal.ctx.splitHorizontal", (ctx: { paneSessionId?: string }) => {
       if (ctx?.paneSessionId) {
-        postToVisibleWebview({ type: "splitPaneAt", direction: "horizontal", sourcePaneId: ctx.paneSessionId });
+        postToCtxWebview(ctx, { type: "splitPaneAt", direction: "horizontal", sourcePaneId: ctx.paneSessionId });
       }
     }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.clearTerminal", (ctx?: { paneSessionId?: string }) => {
+      // Clear scrollback on extension side, then tell webview to clear viewport
+      const provider = getCtxProvider(ctx);
+      // Use the right-clicked pane's session if available, otherwise fall back to active session
+      const sessionId = ctx?.paneSessionId ?? provider.getActiveSessionId();
+      if (sessionId) {
+        sessionManager.clearScrollback(sessionId);
+      }
+      const view = provider.view;
+      if (view) {
+        safePostMessage(view.webview, { type: "ctxClear", sessionId });
+      }
+    }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.newTerminal", (ctx?: { paneSessionId?: string }) => {
+      doNewTerminal(getCtxProvider(ctx));
+    }),
+    vscode.commands.registerCommand("anywhereTerminal.ctx.killTerminal", (ctx?: { paneSessionId?: string }) => {
+      const provider = getCtxProvider(ctx);
+      const sessionId = ctx?.paneSessionId ?? provider.getActiveSessionId();
+      if (!sessionId) {
+        return;
+      }
+      sessionManager.destroySession(sessionId);
+      const view = provider.view;
+      if (view) {
+        safePostMessage(view.webview, { type: "tabRemoved", tabId: sessionId });
+      }
+    }),
+  );
+
+  // ─── Configuration Change Listener ────────────────────────────────
+  // Push updated config to all active webviews when relevant settings change.
+  // See: specs/extension-settings/spec.md#settings-change-listener
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!affectsTerminalConfig(e)) {
+        return;
+      }
+
+      const config = readTerminalConfig();
+      const configUpdateMessage = { type: "configUpdate" as const, config };
+
+      // Push to sidebar and panel providers
+      for (const provider of [sidebarProvider, panelProvider]) {
+        const view = provider.view;
+        if (view) {
+          safePostMessage(view.webview, configUpdateMessage);
+        }
+      }
+
+      // Push to all editor panels
+      for (const panel of TerminalEditorProvider.getActivePanels()) {
+        safePostMessage(panel.webview, configUpdateMessage);
+      }
+    }),
+  );
+
+  // ─── Insert Path Command (Explorer context menu) ────────────────
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "anywhereTerminal.insertPath",
+      (uri: vscode.Uri | undefined, uris: vscode.Uri[] | undefined) => {
+        // Resolve file URIs: multi-select (uris) or single-select (uri) from Explorer
+        const targets = uris && uris.length > 0 ? uris : uri ? [uri] : [];
+        if (targets.length === 0) {
+          return;
+        }
+
+        // Escape each path and join with spaces, append trailing space
+        const escaped = targets.map((u) => escapePathForShell(u.fsPath)).join(" ");
+
+        // Route to the focused sidebar/panel provider's active pane session.
+        // getActiveSessionId() correctly resolves split panes (via webview state).
+        // NOTE: Editor terminals are not targeted by this command — they don't
+        // expose an active session ID to the Extension Host. This is a known
+        // limitation; the Shift+drag approach covers editor terminals directly.
+        const provider = getFocusedProvider();
+        const activeSessionId = provider.getActiveSessionId();
+        if (!activeSessionId) {
+          return;
+        }
+
+        sessionManager.writeToSession(activeSessionId, `${escaped} `);
+
+        // Send visual feedback to the webview (brief flash effect)
+        const view = provider.view;
+        if (view) {
+          safePostMessage(view.webview, { type: "insertPathEffect" });
+        }
+      },
+    ),
   );
 
   // ─── Focus & Move Commands ──────────────────────────────────────

@@ -48,6 +48,24 @@ export interface TerminalSession {
   isSplitPane: boolean;
 }
 
+/** Aggregate memory usage snapshot across all sessions. */
+export interface MemoryMetrics {
+  /** Number of active sessions */
+  sessionCount: number;
+  /** Total characters in all output buffers (unflushed) */
+  totalBufferSize: number;
+  /** Total characters in all scrollback caches */
+  totalScrollbackSize: number;
+  /** Per-session breakdown */
+  sessions: Array<{
+    id: string;
+    name: string;
+    bufferSize: number;
+    scrollbackSize: number;
+    unackedCharCount: number;
+  }>;
+}
+
 // ─── SessionManager ─────────────────────────────────────────────────
 
 /**
@@ -91,9 +109,16 @@ export class SessionManager {
    * @param options.isSplitPane If true, marks the session as a split pane.
    *   Split pane sessions are excluded from getTabsForView() and do NOT
    *   deactivate existing sessions.
+   * @param options.shell Optional shell path override (from settings).
+   * @param options.shellArgs Optional shell arguments override (from settings).
+   * @param options.cwd Optional working directory override (from settings).
    * @returns The session ID (UUID)
    */
-  createSession(viewId: string, webview: MessageSender, options?: { isSplitPane?: boolean }): string {
+  createSession(
+    viewId: string,
+    webview: MessageSender,
+    options?: { isSplitPane?: boolean; shell?: string; shellArgs?: string[]; cwd?: string },
+  ): string {
     const isSplitPane = options?.isSplitPane ?? false;
     const id = crypto.randomUUID();
     const number = this.findAvailableNumber();
@@ -101,13 +126,27 @@ export class SessionManager {
 
     // Load PTY infrastructure
     const nodePty = PtyManager.loadNodePty();
-    const { shell, args } = PtyManager.detectShell();
+
+    // Use provided shell/args or auto-detect
+    const shell = options?.shell;
+    const shellArgs = options?.shellArgs;
+    let resolvedShell: string;
+    let resolvedArgs: string[];
+    if (shell) {
+      resolvedShell = shell;
+      resolvedArgs = shellArgs ?? [];
+    } else {
+      const detected = PtyManager.detectShell();
+      resolvedShell = detected.shell;
+      resolvedArgs = shellArgs && shellArgs.length > 0 ? shellArgs : detected.args;
+    }
+
     const env = PtyManager.buildEnvironment();
-    const cwd = PtyManager.resolveWorkingDirectory();
+    const cwd = options?.cwd || PtyManager.resolveWorkingDirectory();
 
     // Spawn PTY
     const pty = new PtySession(id);
-    pty.spawn(nodePty, shell, args, { cwd, env });
+    pty.spawn(nodePty, resolvedShell, resolvedArgs, { cwd, env });
 
     // Create OutputBuffer
     const outputBuffer = new OutputBuffer(id, webview, pty);
@@ -304,6 +343,40 @@ export class SessionManager {
       return "";
     }
     return session.scrollbackCache.join("");
+  }
+
+  /**
+   * Get aggregate memory usage metrics across all sessions.
+   * Computes totals on demand — zero overhead when not called.
+   */
+  getMemoryMetrics(): MemoryMetrics {
+    let totalBufferSize = 0;
+    let totalScrollbackSize = 0;
+    const sessions: MemoryMetrics["sessions"] = [];
+
+    for (const session of this.sessions.values()) {
+      const bufferSize = session.outputBuffer.bufferSize;
+      const { scrollbackSize } = session;
+      const unackedCharCount = session.outputBuffer.unackedCharCount;
+
+      totalBufferSize += bufferSize;
+      totalScrollbackSize += scrollbackSize;
+
+      sessions.push({
+        id: session.id,
+        name: session.name,
+        bufferSize,
+        scrollbackSize,
+        unackedCharCount,
+      });
+    }
+
+    return {
+      sessionCount: this.sessions.size,
+      totalBufferSize,
+      totalScrollbackSize,
+      sessions,
+    };
   }
 
   /**

@@ -2,7 +2,7 @@
   "name": "anywhere-terminal",
   "displayName": "AnyWhere Terminal",
   "description": "Break free from the bottom panel! Put your terminal anywhere: Primary Sidebar, Secondary Sidebar, or multiple panels at once.",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "publisher": "huybuidac",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -42,6 +42,51 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "configuration": {
+      "title": "AnyWhere Terminal",
+      "properties": {
+        "anywhereTerminal.shell.macOS": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "Custom shell path for macOS. Leave empty to auto-detect (uses $SHELL → /bin/zsh → /bin/bash → /bin/sh)."
+        },
+        "anywhereTerminal.shell.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "machine",
+          "description": "Custom shell arguments. Leave empty to use defaults (e.g., --login for zsh/bash)."
+        },
+        "anywhereTerminal.scrollback": {
+          "type": "number",
+          "default": 10000,
+          "description": "Maximum number of lines in the scrollback buffer."
+        },
+        "anywhereTerminal.fontSize": {
+          "type": "number",
+          "default": 0,
+          "description": "Font size in pixels. Set to 0 to inherit from VS Code (terminal.integrated.fontSize → editor.fontSize → 14)."
+        },
+        "anywhereTerminal.fontFamily": {
+          "type": "string",
+          "default": "",
+          "description": "Font family for the terminal. Leave empty to inherit from VS Code (terminal.integrated.fontFamily → editor.fontFamily → monospace)."
+        },
+        "anywhereTerminal.cursorBlink": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the terminal cursor should blink."
+        },
+        "anywhereTerminal.defaultCwd": {
+          "type": "string",
+          "default": "",
+          "description": "Default working directory for new terminals. Leave empty to use workspace root or home directory."
+        }
+      }
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -160,6 +205,18 @@
         "icon": "media/split-vertical.svg"
       },
       {
+        "command": "anywhereTerminal.ctx.clearTerminal",
+        "title": "Clear Terminal"
+      },
+      {
+        "command": "anywhereTerminal.ctx.newTerminal",
+        "title": "New Terminal"
+      },
+      {
+        "command": "anywhereTerminal.ctx.killTerminal",
+        "title": "Kill Terminal"
+      },
+      {
         "command": "anywhereTerminal.ctx.closePane",
         "title": "Close Pane"
       },
@@ -170,6 +227,10 @@
       {
         "command": "anywhereTerminal.ctx.splitHorizontal",
         "title": "Split Horizontal"
+      },
+      {
+        "command": "anywhereTerminal.insertPath",
+        "title": "Insert Path in AnyWhere Terminal"
       }
     ],
     "menus": {
@@ -217,22 +278,55 @@
       ],
       "webview/context": [
         {
-          "command": "anywhereTerminal.ctx.closePane",
+          "command": "anywhereTerminal.ctx.clearTerminal",
           "when": "webviewSection == 'splitPane'",
-          "group": "pane@1"
+          "group": "terminal@1"
         },
         {
-          "command": "anywhereTerminal.ctx.splitVertical",
+          "command": "anywhereTerminal.ctx.newTerminal",
+          "when": "webviewSection == 'splitPane'",
+          "group": "terminal@2"
+        },
+        {
+          "command": "anywhereTerminal.ctx.killTerminal",
+          "when": "webviewSection == 'splitPane'",
+          "group": "terminal@3"
+        },
+        {
+          "command": "anywhereTerminal.ctx.closePane",
           "when": "webviewSection == 'splitPane'",
           "group": "split@1"
         },
         {
-          "command": "anywhereTerminal.ctx.splitHorizontal",
+          "command": "anywhereTerminal.ctx.splitVertical",
           "when": "webviewSection == 'splitPane'",
           "group": "split@2"
+        },
+        {
+          "command": "anywhereTerminal.ctx.splitHorizontal",
+          "when": "webviewSection == 'splitPane'",
+          "group": "split@3"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "anywhereTerminal.insertPath",
+          "group": "anywhereTerminal@1"
         }
       ],
       "commandPalette": [
+        {
+          "command": "anywhereTerminal.ctx.clearTerminal",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.ctx.newTerminal",
+          "when": "false"
+        },
+        {
+          "command": "anywhereTerminal.ctx.killTerminal",
+          "when": "false"
+        },
         {
           "command": "anywhereTerminal.ctx.closePane",
           "when": "false"

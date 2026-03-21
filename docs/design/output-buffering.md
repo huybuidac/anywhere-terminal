@@ -34,7 +34,7 @@ flowchart LR
     end
 
     P -->|"pty.onData<br/>(rapid, unbounded)"| OB
-    OB -->|"Flush every 8ms<br/>or on size limit"| PM
+    OB -->|"Flush every 4-16ms<br/>(adaptive) or on size limit"| PM
     PM -->|"{ type: 'output',<br/>tabId, data }"| XT
     XT -->|"write callback"| ACK
     ACK -->|"Batch ack<br/>every 5K chars"| OB
@@ -55,33 +55,63 @@ Coalesce rapid `pty.onData` events into fewer, larger `postMessage` calls. PTY c
 
 ```mermaid
 flowchart TD
-    A["pty.onData(chunk)"] --> B["buffer.append(chunk)"]
-    B --> C{"Flush<br/>condition?"}
+    A["pty.onData(chunk)"] --> B["Buffer overflow protection<br/>(1MB cap, FIFO eviction)"]
+    B --> C["buffer.append(chunk)"]
+    C --> D{"Output paused<br/>(view hidden)?"}
+    D -->|"Yes"| E["Accumulate only<br/>(coalesce at MAX_CHUNKS)"]
+    D -->|"No"| F{"Flush<br/>condition?"}
     
-    C -->|"Timer: 8ms elapsed"| D["Flush"]
-    C -->|"Size: buffer > 64KB"| D
-    C -->|"Exit: pty.onExit"| D
-    C -->|"None met"| E["Wait"]
+    F -->|"Timer: adaptive interval elapsed"| G["Flush"]
+    F -->|"Size: buffer > 64KB"| G
+    F -->|"Chunks: >= 100"| G
+    F -->|"None met"| H["Wait"]
     
-    D --> F["Join buffer chunks"]
-    F --> G["webview.postMessage(<br/>{ type: 'output', data })"]
-    G --> H["Reset buffer to empty"]
-    H --> I["Update unacked<br/>char count"]
+    G --> I["Join buffer chunks"]
+    I --> J["Record flush size for throughput"]
+    J --> K["Adapt interval (4-16ms)"]
+    K --> L["webview.postMessage(<br/>{ type: 'output', data })"]
+    L --> M["Update unacked char count"]
+    M --> N{"unacked > 100K?"}
+    N -->|"Yes"| O["pty.pause()"]
+    N -->|"No"| P["Continue"]
 ```
 
 ### Constants
 
 | Constant | Value | Rationale |
 |----------|-------|-----------|
-| `FLUSH_INTERVAL_MS` | 8 | Compromise between VS Code (5ms) and reference (16ms). 8ms ≈ 120fps ceiling, good balance of responsiveness vs. IPC reduction |
-| `MAX_BUFFER_SIZE` | 65536 (64KB) | Large enough to batch big outputs, small enough to avoid visible delay |
+| `MIN_FLUSH_INTERVAL_MS` | 4 | Minimum adaptive interval for low-throughput scenarios |
+| `DEFAULT_FLUSH_INTERVAL_MS` | 8 | Default interval. Compromise between VS Code (5ms) and reference (16ms) |
+| `MAX_FLUSH_INTERVAL_MS` | 16 | Maximum adaptive interval for high-throughput batching |
+| `MAX_BUFFER_SIZE` | 65536 (64KB) | Triggers immediate flush |
 | `MAX_CHUNKS` | 100 | Safety cap on array length |
+| `MAX_TOTAL_BUFFER_CHARS` | 1,048,576 (1MB) | Hard cap on total buffered characters; FIFO eviction when exceeded |
+| `THROUGHPUT_WINDOW_SIZE` | 5 | Number of recent flush sizes for throughput estimation |
+| `HIGH_THROUGHPUT_THRESHOLD` | 32,768 | Average flush size above which interval increases to MAX |
+| `LOW_THROUGHPUT_THRESHOLD` | 1,024 | Average flush size below which interval decreases to MIN |
+
+### Adaptive Flush Interval
+
+The flush interval adapts based on a rolling window of recent flush sizes:
+- Low throughput (avg flush < 1KB) → 4ms interval (more responsive)
+- Normal throughput → 8ms interval
+- High throughput (avg flush > 32KB) → 16ms interval (more batching)
+
+### Buffer Overflow Protection (1MB)
+
+A hard cap of 1MB prevents unbounded memory growth when the view is hidden:
+- If a single chunk exceeds 1MB, it is truncated (keep tail)
+- If accumulated chunks exceed 1MB, oldest chunks are evicted (FIFO)
+
+### Output Pause/Resume for Hidden Views
+
+When a webview becomes hidden, `OutputBuffer.pauseOutput()` stops the flush timer. Data continues to accumulate but is not sent. When the view becomes visible, `resumeOutput()` flushes all accumulated data immediately. This prevents wasted IPC for hidden views.
 
 ### Implementation Notes
 
 - Buffer is a `string[]` array (push chunks, join on flush) — avoids string concatenation overhead
 - Timer is created on first data event, not on construction (no idle timers)
-- Timer is reset on each data event that triggers immediate flush
+- Timer is reset on each flush
 - On `pty.onExit`: flush any remaining data, then fire exit event
 
 ### Comparison with References
@@ -172,30 +202,37 @@ sequenceDiagram
     Note over PTY: PTY resumes sending data
 ```
 
-### WebView-Side Ack Batching
+### WebView-Side Ack Batching (FlowControl)
 
-To avoid excessive ack messages, the webview batches acknowledgments:
+To avoid excessive ack messages, the `FlowControl` class (`src/webview/flow/FlowControl.ts`) batches acknowledgments per session:
 
 ```typescript
-class AckBatcher {
-  private unsentCharCount = 0;
+class FlowControl {
+  private readonly unsentAckCharsMap = new Map<string, number>();
 
-  ack(charCount: number): void {
-    this.unsentCharCount += charCount;
-    while (this.unsentCharCount >= ACK_BATCH_SIZE) {
-      this.unsentCharCount -= ACK_BATCH_SIZE;
-      vscode.postMessage({ type: 'ack', charCount: ACK_BATCH_SIZE });
+  ackChars(count: number, tabId: string): void {
+    const current = this.unsentAckCharsMap.get(tabId) ?? 0;
+    const updated = current + count;
+    if (updated >= ACK_BATCH_SIZE) {
+      this.postMessage({ type: 'ack', charCount: updated, tabId });
+      this.unsentAckCharsMap.set(tabId, 0);
+    } else {
+      this.unsentAckCharsMap.set(tabId, updated);
     }
   }
 }
 ```
 
-This means acks are sent in fixed 5K-char batches, not per write call. The xterm.write() callback provides the trigger:
+Key differences from earlier designs:
+- **Per-session tracking**: Each session has its own unsent ack counter (via `unsentAckCharsMap`), ensuring acks route to the correct `OutputBuffer` on the extension side.
+- **`if` not `while`**: A single ack message is sent with the full accumulated count, rather than looping to send multiple 5K-char batches.
+- **`tabId` included**: The ack message includes `tabId` so the extension can route it to the correct session's `OutputBuffer`.
+
+The xterm.write() callback provides the trigger:
 
 ```typescript
 terminal.write(data, () => {
-  // Called after xterm has parsed the data
-  ackBatcher.ack(data.length);
+  flowControl.ackChars(data.length, msg.tabId);
 });
 ```
 
@@ -260,7 +297,7 @@ flowchart TD
         D["ScrollbackCache.append(chunk)"]
         E{"Flow control:<br/>unacked > 100K?"}
         F["pty.pause()"]
-        G["Wait for flush timer (8ms)<br/>or size limit (64KB)"]
+        G["Wait for adaptive flush timer (4-16ms)<br/>or size limit (64KB)"]
         H["OutputBuffer.flush()"]
     end
 
@@ -272,9 +309,9 @@ flowchart TD
         J["onDidReceiveMessage"]
         K["xterm.write(data, callback)"]
         L["xterm renders to DOM/WebGL"]
-        M["callback: ackBatcher.ack(len)"]
+        M["callback: flowControl.ackChars(len, tabId)"]
         N{"unsentAck >= 5K?"}
-        O["postMessage({ type: 'ack' })"]
+        O["postMessage({ type: 'ack', tabId })"]
     end
 
     subgraph ExtHost2["Extension Host (ack path)"]
@@ -329,17 +366,17 @@ Handling:
 ### 4. WebView Disposed While Buffer Has Data
 
 Handling:
-- `webview.postMessage()` returns `false` or throws when webview is disposed
-- OutputBuffer wraps postMessage in try/catch
-- On failure: stop timer, dispose buffer, log warning
-- SessionManager handles orphaned sessions cleanup
+- `webview.postMessage()` may throw when webview is disposed
+- OutputBuffer wraps postMessage in try/catch (sync throw) and `.then(undefined, () => {})` (async rejection)
+- On failure: the error is silently swallowed (no logging, no cleanup)
+- Sessions are preserved for potential webview re-creation, and output is paused via `pauseOutput()`
 
 ---
 
 ## 9. Interface Definition
 
 ```typescript
-interface IOutputBuffer extends Disposable {
+class OutputBuffer {
   /** Append data from PTY to the buffer */
   append(data: string): void;
 
@@ -349,26 +386,32 @@ interface IOutputBuffer extends Disposable {
   /** Handle acknowledgment from webview (flow control) */
   handleAck(charCount: number): void;
 
+  /** Pause output flushing (view hidden) */
+  pauseOutput(): void;
+
+  /** Resume output flushing (view shown) */
+  resumeOutput(): void;
+
+  /** Update webview reference (on webview re-creation) */
+  updateWebview(webview: MessageSender): void;
+
+  /** Dispose the buffer (best-effort final flush) */
+  dispose(): void;
+
   /** Check if PTY is currently paused */
   readonly isPaused: boolean;
 
   /** Get current unacknowledged char count */
   readonly unackedCharCount: number;
+
+  /** Get current buffered char count */
+  readonly bufferSize: number;
 }
 
 /** Flow control constants */
-const enum FlowControlConstants {
-  HighWatermarkChars = 100_000,
-  LowWatermarkChars = 5_000,
-  AckBatchSize = 5_000,
-}
-
-/** Buffer constants */
-const enum BufferConstants {
-  FlushIntervalMs = 8,
-  MaxBufferSize = 65_536,
-  MaxChunks = 100,
-}
+const HIGH_WATERMARK_CHARS = 100_000;
+const LOW_WATERMARK_CHARS = 5_000;
+const ACK_BATCH_SIZE = 5_000;  // WebView-side (FlowControl class)
 ```
 
 ---

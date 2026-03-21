@@ -43,10 +43,24 @@ VS Code registers terminal-specific color contributions in `terminalColorRegistr
 
 | CSS Variable | xterm.js `ITheme` Property | Description |
 |---|---|---|
-| `--vscode-terminal-background` | `theme.background` | Terminal default background |
+| `--vscode-terminal-background` | `theme.background` | Terminal default background (fallback, see §3) |
 | `--vscode-terminal-foreground` | `theme.foreground` | Terminal default text color |
 | `--vscode-terminalCursor-foreground` | `theme.cursor` | Cursor color |
+| `--vscode-terminalCursor-background` | `theme.cursorAccent` | Cursor accent (outline) color |
 | `--vscode-terminal-selectionBackground` | `theme.selectionBackground` | Text selection highlight |
+| `--vscode-terminal-selectionForeground` | `theme.selectionForeground` | Selected text color |
+| `--vscode-terminal-inactiveSelectionBackground` | `theme.selectionInactiveBackground` | Selection highlight when terminal is unfocused |
+
+#### Scrollbar Properties
+
+The theme also sets scrollbar properties to hide the xterm scrollbar visuals (a 1px overview ruler lane is kept for FitAddon width math):
+
+| xterm.js `ITheme` Property | Value | Description |
+|---|---|---|
+| `theme.overviewRulerBorder` | `'transparent'` | Hide overview ruler border |
+| `theme.scrollbarSliderBackground` | `'transparent'` | Hide scrollbar slider |
+| `theme.scrollbarSliderHoverBackground` | `'transparent'` | Hide scrollbar hover state |
+| `theme.scrollbarSliderActiveBackground` | `'transparent'` | Hide scrollbar active state |
 
 > **Note:** The cursor foreground variable uses `terminalCursor` (no hyphen before "Cursor"), not `terminal-cursor`. This is a VS Code naming convention difference.
 
@@ -60,18 +74,18 @@ VS Code's built-in terminal uses different background colors depending on where 
 
 ### Background Color Resolution Chain
 
+The location-specific variable is tried **first**, then `--vscode-terminal-background` as fallback, then a hardcoded default. This ensures the terminal blends into its container.
+
 ```mermaid
 flowchart TD
-    A["Determine background color"] --> B{"terminal-background\nCSS var set?"}
-    B -->|"Non-empty"| C["Use --vscode-terminal-background"]
-    B -->|"Empty/unset"| D{"Which location?"}
-    D -->|"Panel"| E["Use --vscode-panel-background"]
-    D -->|"Sidebar"| F["Use --vscode-sideBar-background"]
-    D -->|"Editor"| G["Use --vscode-editor-background"]
-    E --> H["Apply to theme.background"]
-    F --> H
-    G --> H
-    C --> H
+    A["Determine background color"] --> B{"Location-specific\nCSS var set?"}
+    B -->|"Non-empty"| C["Use location-specific var\n(panel/sidebar/editor)"]
+    B -->|"Empty/unset"| D{"terminal-background\nCSS var set?"}
+    D -->|"Non-empty"| E["Use --vscode-terminal-background"]
+    D -->|"Empty/unset"| F["Use hardcoded fallback: #1e1e1e"]
+    C --> G["Apply to theme.background"]
+    E --> G
+    F --> G
 ```
 
 ### Location-to-Variable Mapping
@@ -85,7 +99,7 @@ flowchart TD
 
 ### Implementation
 
-The webview receives its location context from the extension host during initialization. The `init` message includes a `location` field (`'panel' | 'sidebar' | 'editor'`), which the ThemeManager uses to select the correct fallback variable.
+The location is initially set to `"sidebar"` (the default) and updated dynamically via `inferLocationFromSize()` in `ResizeCoordinator` based on the container's aspect ratio (`width > height * 1.2` → `"panel"`, otherwise `"sidebar"`). The `"editor"` location is set from the `data-terminal-location` body attribute.
 
 ```typescript
 type TerminalLocation = 'panel' | 'sidebar' | 'editor';
@@ -96,17 +110,11 @@ const LOCATION_BACKGROUND_MAP: Record<TerminalLocation, string> = {
   editor: '--vscode-editor-background',
 };
 
-function resolveBackground(location: TerminalLocation): string {
-  const style = getComputedStyle(document.documentElement);
-  const terminalBg = style.getPropertyValue('--vscode-terminal-background').trim();
-
-  if (terminalBg) {
-    return terminalBg;
-  }
-
-  const fallbackVar = LOCATION_BACKGROUND_MAP[location];
-  return style.getPropertyValue(fallbackVar).trim() || '#1e1e1e';
-}
+// In ThemeManager.getTheme():
+const background =
+  get(LOCATION_BACKGROUND_MAP[this.location]) ??  // Location-specific first
+  get('--vscode-terminal-background') ??            // Then terminal-specific
+  '#1e1e1e';                                        // Then hardcoded fallback
 ```
 
 ---
@@ -291,27 +299,26 @@ import type { ITheme } from '@xterm/xterm';
  *                   Used to select the correct background fallback.
  * @returns Complete ITheme object for xterm.js
  */
-function getXtermTheme(location: TerminalLocation = 'panel'): ITheme {
+// ThemeManager.getTheme() method — returns Record<string, string | undefined>
+getTheme(): Record<string, string | undefined> {
   const style = getComputedStyle(document.documentElement);
   const get = (varName: string): string | undefined => {
     const value = style.getPropertyValue(varName).trim();
-    return value || undefined; // Return undefined for empty strings
+    return value || undefined;
   };
 
-  // Background: terminal-specific → location-specific → hardcoded fallback
+  // Background: location-specific → terminal-specific → hardcoded fallback
   const background =
+    get(LOCATION_BACKGROUND_MAP[this.location]) ??
     get('--vscode-terminal-background') ??
-    get(LOCATION_BACKGROUND_MAP[location]) ??
     '#1e1e1e';
 
-  // Foreground: terminal-specific → editor foreground → fallback
   const foreground =
     get('--vscode-terminal-foreground') ??
     get('--vscode-editor-foreground') ??
     '#cccccc';
 
   return {
-    // Special colors
     background,
     foreground,
     cursor: get('--vscode-terminalCursor-foreground'),
@@ -320,7 +327,7 @@ function getXtermTheme(location: TerminalLocation = 'panel'): ITheme {
     selectionForeground: get('--vscode-terminal-selectionForeground'),
     selectionInactiveBackground: get('--vscode-terminal-inactiveSelectionBackground'),
 
-    // Standard ANSI colors (0–7)
+    // Standard ANSI colors (0-7)
     black: get('--vscode-terminal-ansiBlack'),
     red: get('--vscode-terminal-ansiRed'),
     green: get('--vscode-terminal-ansiGreen'),
@@ -330,7 +337,7 @@ function getXtermTheme(location: TerminalLocation = 'panel'): ITheme {
     cyan: get('--vscode-terminal-ansiCyan'),
     white: get('--vscode-terminal-ansiWhite'),
 
-    // Bright ANSI colors (8–15)
+    // Bright ANSI colors (8-15)
     brightBlack: get('--vscode-terminal-ansiBrightBlack'),
     brightRed: get('--vscode-terminal-ansiBrightRed'),
     brightGreen: get('--vscode-terminal-ansiBrightGreen'),
@@ -339,6 +346,12 @@ function getXtermTheme(location: TerminalLocation = 'panel'): ITheme {
     brightMagenta: get('--vscode-terminal-ansiBrightMagenta'),
     brightCyan: get('--vscode-terminal-ansiBrightCyan'),
     brightWhite: get('--vscode-terminal-ansiBrightWhite'),
+
+    // Hide scrollbar/overview ruler visuals
+    overviewRulerBorder: 'transparent',
+    scrollbarSliderBackground: 'transparent',
+    scrollbarSliderHoverBackground: 'transparent',
+    scrollbarSliderActiveBackground: 'transparent',
   };
 }
 ```
@@ -458,60 +471,59 @@ sequenceDiagram
 
 ---
 
-## 9. ThemeManager Interface
+## 9. ThemeManager Class
+
+The `ThemeManager` is a concrete class (not an interface). It does **not** track individual terminals — instead, `applyToAll()` accepts an iterable of terminals from the caller. This keeps the ThemeManager decoupled from the state store.
 
 ```typescript
-interface IThemeManager {
-  /**
-   * Build and return the current xterm.js theme from CSS variables.
-   */
-  getTheme(): ITheme;
+class ThemeManager {
+  private location: TerminalLocation;
+  private observer: MutationObserver | undefined;
 
-  /**
-   * Apply the current theme to a terminal instance.
-   */
-  applyTheme(terminal: Terminal): void;
+  constructor(initialLocation: TerminalLocation = 'sidebar');
 
-  /**
-   * Apply the current theme to all registered terminal instances.
-   */
-  applyThemeToAll(): void;
+  /** Build theme from CSS variables. Returns Record<string, string | undefined>. */
+  getTheme(): Record<string, string | undefined>;
 
-  /**
-   * Start watching for theme changes via MutationObserver.
-   * Calls applyThemeToAll() whenever the theme changes.
-   */
-  startWatching(): void;
+  /** Get contrast ratio: 7 for high-contrast, 4.5 for normal themes. */
+  getMinimumContrastRatio(): number;
 
-  /**
-   * Stop watching for theme changes. Disconnects the MutationObserver.
-   */
-  stopWatching(): void;
+  /** Apply theme + contrast ratio to all terminal instances. */
+  applyToAll(terminals: Iterable<{ terminal: Terminal }>): void;
 
-  /**
-   * Register a terminal instance for automatic theme updates.
-   */
-  registerTerminal(id: string, terminal: Terminal): void;
+  /** Set body background for current location. */
+  applyBodyBackground(): void;
 
-  /**
-   * Unregister a terminal instance.
-   */
-  unregisterTerminal(id: string): void;
+  /** Update location. Returns true if changed. */
+  updateLocation(location: TerminalLocation): boolean;
+
+  /** Start MutationObserver on body class changes. */
+  startWatching(onThemeChange: () => void): void;
+
+  /** Disconnect MutationObserver. */
+  dispose(): void;
 }
 ```
+
+### High-Contrast Theme Support
+
+High-contrast themes are detected by checking for `vscode-high-contrast` or `vscode-high-contrast-light` CSS classes on `document.body`. When active:
+- `getMinimumContrastRatio()` returns 7 (WCAG AAA) instead of 4.5 (WCAG AA)
+- The higher ratio ensures text remains readable in high-contrast themes
 
 ---
 
 ## 10. File Location
 
 ```
-src/webview/ui/ThemeManager.ts
+src/webview/theme/ThemeManager.ts
 ```
 
 ### Dependencies
-- `@xterm/xterm` — `ITheme`, `Terminal` types
+- `@xterm/xterm` — `Terminal` type
 - Browser APIs — `getComputedStyle`, `MutationObserver`
 
 ### Dependents
-- `TerminalWebviewApp` (main.ts) — creates ThemeManager, registers terminals
-- `TerminalManager` — calls `applyTheme()` when creating new terminal instances
+- `main.ts` — creates ThemeManager, calls `applyToAll()`, `applyBodyBackground()`
+- `TerminalFactory` — reads `getTheme()` and `getMinimumContrastRatio()` during terminal creation
+- `ResizeCoordinator` — triggers `updateLocation()` via callback when container aspect ratio changes

@@ -96,6 +96,22 @@ vi.mock("./OutputBuffer", () => {
     pauseOutput = vi.fn();
     resumeOutput = vi.fn();
     updateWebview = vi.fn();
+    /** Mock bufferSize — settable for testing getMemoryMetrics(). */
+    private _mockBufferSize = 0;
+    get bufferSize(): number {
+      return this._mockBufferSize;
+    }
+    set bufferSize(value: number) {
+      this._mockBufferSize = value;
+    }
+    /** Mock unackedCharCount — settable for testing getMemoryMetrics(). */
+    private _mockUnackedCharCount = 0;
+    get unackedCharCount(): number {
+      return this._mockUnackedCharCount;
+    }
+    set unackedCharCount(value: number) {
+      this._mockUnackedCharCount = value;
+    }
     constructor(
       public _tabId: string,
       public _webview: unknown,
@@ -937,6 +953,67 @@ describe("SessionManager: pauseOutputForView / resumeOutputForView", () => {
     const sm = new SessionManager();
 
     expect(() => sm.resumeOutputForView("nonexistent")).not.toThrow();
+
+    sm.dispose();
+  });
+});
+
+// ─── getMemoryMetrics ───────────────────────────────────────────────
+
+describe("SessionManager: getMemoryMetrics", () => {
+  it("returns zeros when no sessions exist", () => {
+    const sm = new SessionManager();
+
+    const metrics = sm.getMemoryMetrics();
+
+    expect(metrics.sessionCount).toBe(0);
+    expect(metrics.totalBufferSize).toBe(0);
+    expect(metrics.totalScrollbackSize).toBe(0);
+    expect(metrics.sessions).toEqual([]);
+
+    sm.dispose();
+  });
+
+  it("returns correct aggregate and per-session metrics", () => {
+    const sm = new SessionManager();
+    const webview = createMockWebview();
+
+    const id1 = sm.createSession("sidebar", webview);
+    const id2 = sm.createSession("sidebar", webview);
+
+    // Set up mock buffer sizes and scrollback
+    const session1 = sm.getSession(id1)!;
+    const session2 = sm.getSession(id2)!;
+
+    // Set mock values on the output buffers
+    (session1.outputBuffer as unknown as { bufferSize: number }).bufferSize = 1000;
+    (session1.outputBuffer as unknown as { unackedCharCount: number }).unackedCharCount = 500;
+    session1.scrollbackSize = 2000;
+
+    (session2.outputBuffer as unknown as { bufferSize: number }).bufferSize = 3000;
+    (session2.outputBuffer as unknown as { unackedCharCount: number }).unackedCharCount = 1500;
+    session2.scrollbackSize = 4000;
+
+    const metrics = sm.getMemoryMetrics();
+
+    expect(metrics.sessionCount).toBe(2);
+    expect(metrics.totalBufferSize).toBe(4000); // 1000 + 3000
+    expect(metrics.totalScrollbackSize).toBe(6000); // 2000 + 4000
+    expect(metrics.sessions).toHaveLength(2);
+
+    // Find sessions by ID (order may vary)
+    const m1 = metrics.sessions.find((s: { id: string }) => s.id === id1)!;
+    const m2 = metrics.sessions.find((s: { id: string }) => s.id === id2)!;
+
+    expect(m1.name).toBe("Terminal 1");
+    expect(m1.bufferSize).toBe(1000);
+    expect(m1.scrollbackSize).toBe(2000);
+    expect(m1.unackedCharCount).toBe(500);
+
+    expect(m2.name).toBe("Terminal 2");
+    expect(m2.bufferSize).toBe(3000);
+    expect(m2.scrollbackSize).toBe(4000);
+    expect(m2.unackedCharCount).toBe(1500);
 
     sm.dispose();
   });

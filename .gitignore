@@ -3,9 +3,6 @@ dist
 node_modules
 .vscode-test/
 *.
-.agents/skills/cyberk-flow
-.agents/workflows/cyberk-flow
-.opencode/plugins/cyber-flow.ts
 
 # Build artifacts in media/
 media/webview.js
@@ -16,7 +13,19 @@ media/xterm.css
 coverage/
 
 # cyberk-flow
-.drafts
 cyberk-flow/memory.db*
-*.vsix
 session-ses_*
+*.vsix
+
+.agents/skills/cyberk-flow
+.agents/workflows/cyberk-flow
+.opencode/plugins/cyber-flow.ts
+.drafts
+.agents/rules/cyberk-flow
+.agents/workflows/cf-*
+
+# cyberk-flow
+.agents/rules/cyberk-flow/GEMINI.md
+.opencode/opencode.jsonc
+.opencode/plugins/cyberk-flow.ts
+.gitnexus

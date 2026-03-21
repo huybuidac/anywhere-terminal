@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "cyberk-flow": {
+      "source": "cyberk-dev/cyberk-skills",
+      "sourceType": "github",
+      "computedHash": "aea34f15c7344155e6993a5eb14d907e43a21c0d09d9a854609eafee1b3f7895"
+    }
+  }
+}

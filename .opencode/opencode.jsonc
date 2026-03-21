@@ -1,30 +1,13 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": ["@franlol/opencode-md-table-formatter@latest"],
-  "mcp": {
-    "gkg": {
-      "type": "remote",
-      "url": "http://localhost:27495/mcp"
-    },
-    "deepwiki": {
-      "type": "remote",
-      "url": "https://mcp.deepwiki.com/mcp"
-    },
-    "gh_grep": {
-      "type": "remote",
-      "url": "https://mcp.grep.app"
-    },
-    "brave-search": {
-      "type": "local",
-      "command": ["npx", "-y", "@brave/brave-search-mcp-server"]
-    }
-  },
   "permission": {
     "question": "allow"
   },
   "agent": {
     "cf-master": {
       "permission": {
+        "read": "allow",
         "edit": "allow",
         "task": "allow",
         "question": "allow"
@@ -32,12 +15,69 @@
     },
     "cf-librarian": {
       "permission": {
-        "edit": "allow",
+        "read": "allow",
+        "edit": {
+          "docs": "allow",
+          "cyberk-flow": "allow"
+        },
         "task": "allow"
+      }
+    },
+    "cf-oracle": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review": {
+      "permission": {
+        "read": "allow"
+      }
+    },
+    "cf-review-master": {
+      "permission": {
+        "read": "allow",
+        "edit": "allow",
+        "task": "allow",
+        "question": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review-contracts": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review-data-security": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review-frontend": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-review-logic": {
+      "permission": {
+        "read": "allow"
+      },
+      "reasoningEffort": "high"
+    },
+    "cf-knowledge-extract": {
+      "permission": {
+        "read": "allow",
+        "edit": "allow",
+        "task": "allow",
+        "question": "allow"
       }
     },
     "cf-build": {
       "permission": {
+        "read": "allow",
         "edit": "allow",
         "task": "allow",
         "question": "allow"
@@ -45,6 +85,7 @@
     },
     "cf-plan": {
       "permission": {
+        "read": "allow",
         "edit": "allow",
         "task": "allow",
         "question": "allow"
@@ -52,6 +93,7 @@
     },
     "cf-archive": {
       "permission": {
+        "read": "allow",
         "edit": "allow",
         "task": "allow",
         "question": "allow"

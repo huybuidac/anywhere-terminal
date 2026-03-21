@@ -12,6 +12,8 @@ export interface TerminalConfig {
   cursorBlink: boolean;
   /** Maximum number of lines in the scrollback buffer */
   scrollback: number;
+  /** Font family (empty string = inherit from VS Code) */
+  fontFamily: string;
 }
 
 // ─── WebView → Extension Messages ───────────────────────────────────
@@ -88,6 +90,15 @@ export interface AckMessage {
   type: "ack";
   /** Number of characters processed (sent in batches of ACK_BATCH_SIZE = 5000) */
   charCount: number;
+  /** Session ID this ack belongs to (routes ack to the correct OutputBuffer). */
+  tabId: string;
+}
+
+/** Terminal view received focus (click/keyboard). Reports active pane session ID for split-pane routing. */
+export interface FocusMessage {
+  type: "focus";
+  /** Active pane session ID (resolved from split layout, not tab ID) */
+  activeSessionId?: string;
 }
 
 /**
@@ -104,7 +115,8 @@ export type WebViewToExtensionMessage =
   | ClearMessage
   | AckMessage
   | RequestSplitSessionMessage
-  | RequestCloseSplitPaneMessage;
+  | RequestCloseSplitPaneMessage
+  | FocusMessage;
 
 // ─── Extension → WebView Messages ───────────────────────────────────
 
@@ -232,6 +244,17 @@ export interface SplitPaneAtMessage {
   sourcePaneId: string;
 }
 
+/** Context menu: clear terminal viewport and scrollback for a specific session. */
+export interface CtxClearMessage {
+  type: "ctxClear";
+  sessionId?: string;
+}
+
+/** Visual feedback: a file path was inserted into the terminal via context menu. */
+export interface InsertPathEffectMessage {
+  type: "insertPathEffect";
+}
+
 /**
  * All messages that can be sent from the Extension Host to the WebView.
  * Use msg.type as the discriminant in switch/case for exhaustive handling.
@@ -250,4 +273,6 @@ export type ExtensionToWebViewMessage =
   | SplitPaneCreatedMessage
   | CloseSplitPaneMessage
   | CloseSplitPaneByIdMessage
-  | SplitPaneAtMessage;
+  | SplitPaneAtMessage
+  | CtxClearMessage
+  | InsertPathEffectMessage;

@@ -63,8 +63,10 @@ switch (msg.type) {
 | `createTab` | User requested a new tab | *(none)* | On "+" button click or command |
 | `switchTab` | User switched to a different tab | `{ tabId }` | On tab click |
 | `closeTab` | User requested tab close | `{ tabId }` | On tab "x" button click |
+| `requestSplitSession` | User requested a split pane | `{ direction, sourcePaneId }` | On split command or context menu |
+| `requestCloseSplitPane` | User requested closing a split pane | `{ sessionId }` | On close split pane action |
 | `clear` | Clear terminal scrollback | `{ tabId }` | On clear command |
-| `ack` | Flow control acknowledgment | `{ charCount }` | After xterm.write() callback, batched per 5K chars |
+| `ack` | Flow control acknowledgment | `{ charCount, tabId }` | After xterm.write() callback, batched per 5K chars |
 
 ### 3.2 TypeScript Type Definitions
 
@@ -128,6 +130,24 @@ interface ClearMessage {
   tabId: string;
 }
 
+// === Split Pane ===
+
+/** User requested a new PTY session for a split pane. */
+interface RequestSplitSessionMessage {
+  type: 'requestSplitSession';
+  /** Direction of the split */
+  direction: 'horizontal' | 'vertical';
+  /** Session ID of the pane being split */
+  sourcePaneId: string;
+}
+
+/** User requested destruction of a split pane's session. */
+interface RequestCloseSplitPaneMessage {
+  type: 'requestCloseSplitPane';
+  /** Session ID of the pane to close */
+  sessionId: string;
+}
+
 // === Flow Control ===
 
 /** Acknowledgment that the WebView has processed terminal output data. */
@@ -135,6 +155,8 @@ interface AckMessage {
   type: 'ack';
   /** Number of characters processed (sent in batches of ACK_BATCH_SIZE = 5000) */
   charCount: number;
+  /** Session ID this ack belongs to (routes ack to the correct OutputBuffer) */
+  tabId: string;
 }
 ```
 
@@ -147,13 +169,20 @@ interface AckMessage {
 | Type | Purpose | Payload | When Sent |
 |------|---------|---------|-----------|
 | `init` | Initial state after handshake | `{ tabs, config }` | Once, in response to `ready` |
-| `output` | PTY output (buffered) | `{ tabId, data }` | On buffer flush (every 8ms or 64KB) |
+| `output` | PTY output (buffered) | `{ tabId, data }` | On buffer flush (adaptive 4-16ms or 64KB) |
 | `exit` | PTY process exited | `{ tabId, code }` | When shell process exits |
 | `tabCreated` | New tab created | `{ tabId, name }` | In response to `createTab` |
 | `tabRemoved` | Tab destroyed | `{ tabId }` | In response to `closeTab` or process exit cleanup |
 | `restore` | Scrollback restore data | `{ tabId, data }` | On view re-creation (when `retainContextWhenHidden` fails) |
 | `configUpdate` | Settings changed | `{ config }` | When user changes `anywhereTerminal.*` settings |
 | `error` | Error notification | `{ message, severity }` | On recoverable errors that the user should see |
+| `viewShow` | View became visible | *(none)* | When view transitions from hidden to visible |
+| `splitPane` | Trigger split in webview | `{ direction }` | On split terminal command |
+| `splitPaneCreated` | New split session confirmed | `{ sourcePaneId, newSessionId, newSessionName, direction }` | After extension creates split PTY |
+| `closeSplitPane` | Close active split pane | *(none)* | On close split pane command |
+| `closeSplitPaneById` | Close specific split pane | `{ sessionId }` | From context menu |
+| `splitPaneAt` | Split specific pane | `{ direction, sourcePaneId }` | From context menu |
+| `ctxClear` | Clear specific pane | `{ sessionId? }` | From context menu |
 
 ### 4.2 TypeScript Type Definitions
 
@@ -252,6 +281,59 @@ interface ErrorMessage {
   /** Severity level determines display style */
   severity: 'info' | 'warn' | 'error';
 }
+
+// === View Lifecycle ===
+
+/** Internal: sent when the view becomes visible again (for deferred resize). */
+interface ViewShowMessage {
+  type: 'viewShow';
+}
+
+// === Split Pane (Extension → WebView) ===
+
+/** Trigger a split action in the webview. */
+interface SplitPaneMessage {
+  type: 'splitPane';
+  /** Direction of the split */
+  direction: 'horizontal' | 'vertical';
+}
+
+/** Confirms a new split session was created by the extension host. */
+interface SplitPaneCreatedMessage {
+  type: 'splitPaneCreated';
+  /** Session ID of the pane that was split */
+  sourcePaneId: string;
+  /** New session ID for the split pane */
+  newSessionId: string;
+  /** Display name for the new session */
+  newSessionName: string;
+  /** Direction of the split */
+  direction: 'horizontal' | 'vertical';
+}
+
+/** Close the active split pane in the webview. */
+interface CloseSplitPaneMessage {
+  type: 'closeSplitPane';
+}
+
+/** Close a specific split pane by session ID (from context menu). */
+interface CloseSplitPaneByIdMessage {
+  type: 'closeSplitPaneById';
+  sessionId: string;
+}
+
+/** Split a specific pane by session ID (from context menu). */
+interface SplitPaneAtMessage {
+  type: 'splitPaneAt';
+  direction: 'horizontal' | 'vertical';
+  sourcePaneId: string;
+}
+
+/** Context menu: clear terminal viewport and scrollback for a specific session. */
+interface CtxClearMessage {
+  type: 'ctxClear';
+  sessionId?: string;
+}
 ```
 
 ---
@@ -267,6 +349,8 @@ interface TerminalConfig {
   cursorBlink: boolean;
   /** Maximum number of lines in the scrollback buffer */
   scrollback: number;
+  /** Font family (empty string = inherit from VS Code) */
+  fontFamily: string;
 }
 ```
 
@@ -274,7 +358,7 @@ interface TerminalConfig {
 
 ## 6. Discriminated Union Types
 
-### 6.1 WebView → Extension
+### 6.1 WebView → Extension (10 types)
 
 ```typescript
 /**
@@ -289,10 +373,12 @@ type WebViewToExtensionMessage =
   | SwitchTabMessage
   | CloseTabMessage
   | ClearMessage
-  | AckMessage;
+  | AckMessage
+  | RequestSplitSessionMessage
+  | RequestCloseSplitPaneMessage;
 ```
 
-### 6.2 Extension → WebView
+### 6.2 Extension → WebView (15 types)
 
 ```typescript
 /**
@@ -307,19 +393,14 @@ type ExtensionToWebViewMessage =
   | TabRemovedMessage
   | RestoreMessage
   | ConfigUpdateMessage
-  | ErrorMessage;
-```
-
-### 6.3 Type Guards (Optional Utility)
-
-```typescript
-function isWebViewMessage(msg: unknown): msg is WebViewToExtensionMessage {
-  return typeof msg === 'object' && msg !== null && 'type' in msg;
-}
-
-function isExtensionMessage(msg: unknown): msg is ExtensionToWebViewMessage {
-  return typeof msg === 'object' && msg !== null && 'type' in msg;
-}
+  | ErrorMessage
+  | ViewShowMessage
+  | SplitPaneMessage
+  | SplitPaneCreatedMessage
+  | CloseSplitPaneMessage
+  | CloseSplitPaneByIdMessage
+  | SplitPaneAtMessage
+  | CtxClearMessage;
 ```
 
 ---
@@ -343,7 +424,7 @@ sequenceDiagram
 
     Note over WV: 2. WebView Bootstrap
 
-    Note over WV: DOM loads<br/>webview.js executes<br/>xterm.js initializes<br/>FitAddon initializes<br/>ResizeObserver attached
+    Note over WV: DOM loads<br/>webview.js executes<br/>Services initialized<br/>(ThemeManager, ResizeCoordinator, etc.)
 
     WV->>Ext: { type: 'ready' }
 
@@ -355,7 +436,7 @@ sequenceDiagram
 
     Note over WV: 4. Terminal Creation
 
-    Note over WV: Create xterm Terminal instance<br/>Apply config & theme<br/>terminal.open(container)<br/>fitAddon.fit()
+    Note over WV: TerminalFactory.createTerminal()<br/>Apply config & theme<br/>terminal.open(container)<br/>fitTerminal()
 
     WV->>Ext: { type: 'resize', tabId, cols, rows }
 
@@ -435,7 +516,7 @@ sequenceDiagram
 
     Note over Ext: outputBuffer.append('l')<br/>unackedChars += 1
 
-    Note over Ext: 8ms flush timer fires
+    Note over Ext: Adaptive flush timer fires (4-16ms)
 
     Ext->>WV: { type: 'output',<br/>  tabId: 'abc-123',<br/>  data: 'l' }
 
@@ -443,7 +524,7 @@ sequenceDiagram
 
     Note over WV: 'l' appears on screen
 
-    Note over WV: callback fires<br/>ackBatcher.ack(1)
+    Note over WV: callback fires<br/>flowControl.ackChars(1, tabId)
 
     Note over WV: unsentAck < 5000<br/>No ack message yet
 ```
@@ -464,7 +545,7 @@ sequenceDiagram
 
     Ext->>WV: { type: 'tabCreated',<br/>  tabId: 'xyz-789',<br/>  name: 'Terminal 2' }
 
-    Note over WV: Create new xterm Terminal<br/>Add tab to tab bar<br/>Switch active tab to new one<br/>fitAddon.fit()
+    Note over WV: TerminalFactory.createTerminal()<br/>Add tab to tab bar<br/>Switch active tab to new one<br/>fitTerminal()
 
     WV->>Ext: { type: 'switchTab',<br/>  tabId: 'xyz-789' }
 
@@ -502,7 +583,7 @@ sequenceDiagram
 
     Ext->>WV: { type: 'tabRemoved',<br/>  tabId: 'abc-123' }
 
-    Note over WV: Remove tab from tab bar<br/>Destroy xterm instance<br/>Dispose fitAddon<br/>Switch to next available tab
+    Note over WV: removeTerminal():<br/>Destroy xterm instance<br/>Remove container<br/>Switch to next available tab<br/>or request new tab if last closed
 
     alt No tabs remaining
         Note over WV: Show empty state or<br/>auto-create new tab
@@ -548,7 +629,7 @@ sequenceDiagram
 
     Ext->>WV: { type: 'configUpdate',<br/>  config: { fontSize: 16 } }
 
-    Note over WV: Apply to all xterm instances:<br/>terminal.options.fontSize = 16<br/>fitAddon.fit() (recalculate dimensions)
+    Note over WV: TerminalFactory.applyConfig():<br/>terminal.options.fontSize = 16<br/>fitTerminal() (recalculate dimensions)
 
     WV->>Ext: { type: 'resize',<br/>  tabId: 'abc-123',<br/>  cols: 72, rows: 20 }
 
@@ -666,5 +747,5 @@ src/types/messages.ts
 ### Dependents
 - `src/providers/TerminalViewProvider.ts` — handles `WebViewToExtensionMessage`
 - `src/providers/TerminalEditorProvider.ts` — handles `WebViewToExtensionMessage`
-- `src/webview/main.ts` — handles `ExtensionToWebViewMessage`
-- `src/webview/utils/MessageHandler.ts` — wraps `postMessage` with types
+- `src/webview/main.ts` — composition root, handles `init` message directly
+- `src/webview/messaging/MessageRouter.ts` — typed dispatch table for all other `ExtensionToWebViewMessage` types

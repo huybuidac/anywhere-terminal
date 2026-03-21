@@ -1,0 +1,1480 @@
+diff --git a/cyberk-flow/changes/add-theme-settings/discovery.md b/cyberk-flow/changes/add-theme-settings/discovery.md
+new file mode 100644
+index 0000000..7a92d0b
+--- /dev/null
++++ b/cyberk-flow/changes/add-theme-settings/discovery.md
+@@ -0,0 +1,62 @@
++# Discovery: add-theme-settings
++
++## Workstreams
++
++| # | Workstream | Used? | Justification |
++|---|---|---|---|
++| 1 | Memory Recall | ✅ | Found prior theme-manager spec, design docs, config patterns |
++| 2 | Architecture Snapshot | ✅ | Mapped affected files: webview/main.ts, providers, extension.ts, messages.ts, package.json |
++| 3 | Internal Patterns | ✅ | Existing ThemeManager in main.ts, TerminalConfig interface, applyConfig() |
++| 4 | External Research | ❌ | Not needed — VS Code extension API is well-known, no novel libraries |
++| 5 | Documentation | ❌ | Existing design doc (docs/design/theme-integration.md) is comprehensive |
++| 6 | Constraint Check | ✅ | Checked package.json — no new dependencies needed |
++
++## Key Findings
++
++### Existing Theme Infrastructure (main.ts)
++- `getXtermTheme()` already reads all 16 ANSI + 4 special CSS variables
++- `LOCATION_BACKGROUND_MAP` already maps panel/sidebar/editor to CSS variables
++- `applyBodyBackground()` and `applyThemeToAll()` exist
++- `startThemeWatcher()` uses MutationObserver on body class
++- `getFontFamily()` reads `--vscode-editor-font-family` CSS variable
++- Location inference via `inferLocationFromSize()` (aspect ratio heuristic)
++
++### Existing Config Infrastructure
++- `TerminalConfig` interface: `{ fontSize, cursorBlink, scrollback }`
++- `applyConfig()` in main.ts applies partial config updates to all terminals
++- `ConfigUpdateMessage` type exists for extension→webview config push
++- Both providers send hardcoded config `{ fontSize: 14, cursorBlink: true, scrollback: 10000 }` in onReady()
++
++### Gaps
++
++| Have | Need |
++|---|---|
++| Location-aware background via `LOCATION_BACKGROUND_MAP` | Already implemented — background fallback chain works |
++| `getFontFamily()` reads CSS variable | Font family already read from CSS; need to also accept config override |
++| Hardcoded config in providers | Read from `workspace.getConfiguration('anywhereTerminal')` |
++| No `contributes.configuration` in package.json | Define all 6 settings |
++| No `onDidChangeConfiguration` listener | Listen and push `configUpdate` to webviews |
++| No high-contrast specific handling | Detect high-contrast via body class, ensure theme works |
++| TerminalConfig missing fontFamily | Add fontFamily to TerminalConfig interface |
++
++### Key Decisions
++
++| Decision | Choice | Rationale |
++|---|---|---|
++| Font resolution location | Extension host (not CSS vars) | Per design doc: `terminal.integrated.fontSize` and `editor.fontSize` are not CSS vars in webviews |
++| Settings namespace | `anywhereTerminal.*` | Matches existing convention in PLAN.md |
++| Shell/args settings | macOS only for now | Extension is macOS-focused per Phase 4 |
++| High-contrast detection | Body class check | VS Code sets `vscode-high-contrast` / `vscode-high-contrast-light` classes |
++| Config change propagation | Push via `configUpdate` message | Existing pattern — `ConfigUpdateMessage` already defined |
++
++## Risks & Constraints
++
++| Risk | Level | Mitigation |
++|---|---|---|
++| Font size 0 means "inherit" | LOW | Already handled in applyConfig — `config.fontSize \|\| 14` |
++| High-contrast themes may omit ANSI colors | LOW | getXtermTheme already returns undefined for missing vars, xterm.js uses defaults |
++| Shell path validation on settings change | LOW | Reuse existing `validateShell()` from PtyManager |
++
++## Open Questions
++
++None — all questions resolved from existing design docs and codebase analysis.
+diff --git a/cyberk-flow/changes/add-theme-settings/proposal.md b/cyberk-flow/changes/add-theme-settings/proposal.md
+new file mode 100644
+index 0000000..6f75098
+--- /dev/null
++++ b/cyberk-flow/changes/add-theme-settings/proposal.md
+@@ -0,0 +1,50 @@
++# Proposal: add-theme-settings
++
++## Why
++
++Phase 3 polish tasks 3.1 (Advanced Theme Integration) and 3.2 (Extension Settings) are needed to make AnyWhere Terminal feel native to VS Code. Currently, the terminal uses hardcoded config values and lacks user-configurable settings. The theme integration needs enhancement for high-contrast support and font resolution from VS Code settings.
++
++## Appetite
++
++**S ≤1d** — Both features build on existing infrastructure (ThemeManager, TerminalConfig, ConfigUpdateMessage). The design is fully documented.
++
++## Scope Boundaries
++
++### In Scope
++- Define `contributes.configuration` in package.json with 6 settings
++- Create settings reader module to resolve config from `workspace.getConfiguration`
++- Wire `onDidChangeConfiguration` listener to push changes to active webviews
++- Font resolution chain: `anywhereTerminal.fontSize` → `terminal.integrated.fontSize` → `editor.fontSize` → 14
++- Font family resolution chain: `anywhereTerminal.fontFamily` → `terminal.integrated.fontFamily` → `editor.fontFamily` → CSS var → 'monospace'
++- High-contrast theme detection and support verification
++- Add `fontFamily` field to `TerminalConfig` interface
++- Replace hardcoded config in providers with settings reader
++
++### Explicitly Cut
++- Performance optimization (Phase 3 task 3.3) — separate change
++- Advanced keyboard handling (Phase 3 task 3.4) — separate change
++- Context menu (Phase 3 task 3.5) — separate change
++- Cross-platform shell settings (Linux/Windows) — macOS only for now
++- E2E tests — no user-visible UI flow changes (settings are applied programmatically)
++
++## Capability List
++
++1. **extension-settings**: Define and read extension settings from VS Code configuration
++2. **advanced-theme**: Enhanced theme integration with font resolution and high-contrast support
++
++## Impact
++
++- **Users**: Can customize shell, scrollback, font size, cursor blink, and default CWD via VS Code settings
++- **Developers**: Settings reader module centralizes config resolution, replacing hardcoded values
++
++## Risk Rating
++
++**LOW** — Additive features on existing infrastructure. No breaking changes. No new dependencies.
++
++## UI Impact & E2E
++
++User-visible UI behavior affected? NO
++
++Settings are applied programmatically to terminal instances. No new pages, forms, or navigation. Font/theme changes are visual but don't constitute a user-interactive flow.
++
++E2E = NOT REQUIRED
+diff --git a/cyberk-flow/changes/add-theme-settings/specs/advanced-theme/spec.md b/cyberk-flow/changes/add-theme-settings/specs/advanced-theme/spec.md
+new file mode 100644
+index 0000000..10a5b2d
+--- /dev/null
++++ b/cyberk-flow/changes/add-theme-settings/specs/advanced-theme/spec.md
+@@ -0,0 +1,37 @@
++# Spec: advanced-theme
++
++**Parent change**: add-theme-settings
++**Design ref**: docs/design/theme-integration.md
++
++## ADDED Requirements
++
++### Requirement: high-contrast-support
++
++The ThemeManager SHALL detect high-contrast themes via `document.body` class and ensure correct rendering.
++
++- When body has class `vscode-high-contrast` or `vscode-high-contrast-light`, the theme MUST still render correctly
++- Missing ANSI color CSS variables (common in high-contrast themes) SHALL result in `undefined` values in the ITheme object, allowing xterm.js to use its built-in defaults
++- The `minimumContrastRatio` terminal option SHALL be set to `7` for high-contrast themes (vs `4.5` for normal themes) to ensure WCAG AAA compliance
++
++#### Scenario: High-contrast theme applies higher contrast ratio
++- Given the user switches to a high-contrast theme
++- When the MutationObserver fires
++- Then all terminal instances have `minimumContrastRatio` set to 7
++
++#### Scenario: Missing ANSI colors in high-contrast theme
++- Given a high-contrast theme does not define `--vscode-terminal-ansiBlue`
++- When `getXtermTheme()` is called
++- Then the returned theme has `blue: undefined` and xterm.js uses its default
++
++### Requirement: font-config-application
++
++The webview `applyConfig()` function SHALL apply `fontFamily` from config updates in addition to existing `fontSize`, `cursorBlink`, and `scrollback` fields.
++
++- When `config.fontFamily` is a non-empty string, it SHALL be applied to `terminal.options.fontFamily`
++- When `config.fontFamily` is empty string, the webview SHALL fall back to reading `--vscode-editor-font-family` CSS variable, then `'monospace'`
++- After fontFamily changes, `fitAddon.fit()` MUST be called (font metrics affect cell dimensions)
++
++#### Scenario: fontFamily applied from config update
++- Given a terminal is active
++- When a `configUpdate` message arrives with `{ fontFamily: "JetBrains Mono" }`
++- Then all terminal instances have `fontFamily` set to "JetBrains Mono" and are re-fitted
+diff --git a/cyberk-flow/changes/add-theme-settings/specs/extension-settings/spec.md b/cyberk-flow/changes/add-theme-settings/specs/extension-settings/spec.md
+new file mode 100644
+index 0000000..6a88c88
+--- /dev/null
++++ b/cyberk-flow/changes/add-theme-settings/specs/extension-settings/spec.md
+@@ -0,0 +1,101 @@
++# Spec: extension-settings
++
++**Parent change**: add-theme-settings
++**Design ref**: docs/design/theme-integration.md#§5, docs/PLAN.md#§3.2
++
++## ADDED Requirements
++
++### Requirement: settings-schema
++
++The extension SHALL define a `contributes.configuration` section in `package.json` with the following settings:
++
++- `anywhereTerminal.shell.macOS` (string, default `""`) — Custom shell path for macOS. Empty string means auto-detect.
++- `anywhereTerminal.shell.args` (array of strings, default `[]`) — Custom shell arguments. Empty array means use defaults.
++- `anywhereTerminal.scrollback` (number, default `10000`) — Maximum scrollback buffer lines.
++- `anywhereTerminal.fontSize` (number, default `0`) — Font size in pixels. 0 means inherit from VS Code.
++- `anywhereTerminal.fontFamily` (string, default `""`) — Font family. Empty string means inherit from VS Code.
++- `anywhereTerminal.cursorBlink` (boolean, default `true`) — Whether the cursor blinks.
++- `anywhereTerminal.defaultCwd` (string, default `""`) — Default working directory. Empty string means workspace root or home.
++
++#### Scenario: Settings appear in VS Code Settings UI
++- Given the extension is installed
++- When the user opens Settings and searches "anywhereTerminal"
++- Then all 7 settings are visible with descriptions and correct default values
++
++### Requirement: settings-reader
++
++The extension host SHALL provide a `readTerminalSettings()` function that reads all `anywhereTerminal.*` settings via `workspace.getConfiguration('anywhereTerminal')` and returns a resolved configuration object.
++
++- Font size resolution chain: `anywhereTerminal.fontSize` (if >0) → `terminal.integrated.fontSize` (if >0) → `editor.fontSize` (if >0) → 14
++- Font size MUST be clamped to range [6, 100]
++- Font family resolution chain: `anywhereTerminal.fontFamily` (if non-empty) → `terminal.integrated.fontFamily` (if non-empty) → `editor.fontFamily` (if non-empty) → `'monospace'`
++- Shell resolution: `anywhereTerminal.shell.macOS` (if non-empty) → auto-detect via PtyManager.detectShell()
++- CWD resolution: `anywhereTerminal.defaultCwd` (if non-empty and valid directory) → workspace root → home directory
++
++#### Scenario: Font size inherits from editor when set to 0
++- Given `anywhereTerminal.fontSize` is 0 and `editor.fontSize` is 16
++- When `readTerminalSettings()` is called
++- Then the resolved fontSize is 16
++
++#### Scenario: Font size clamped to valid range
++- Given `anywhereTerminal.fontSize` is 200
++- When `readTerminalSettings()` is called
++- Then the resolved fontSize is 100
++
++#### Scenario: Invalid or missing settings use safe defaults
++- Given `anywhereTerminal.scrollback` is not set (or set to an invalid value)
++- When `readTerminalSettings()` is called
++- Then the resolved scrollback is 10000 (the default)
++
++### Requirement: settings-change-listener
++
++The extension host SHALL listen for configuration changes via `workspace.onDidChangeConfiguration` and push updated config to all active webviews via `configUpdate` messages.
++
++- The listener MUST check `e.affectsConfiguration('anywhereTerminal')` before processing
++- The listener MUST also check `e.affectsConfiguration('editor.fontSize')`, `e.affectsConfiguration('editor.fontFamily')`, `e.affectsConfiguration('terminal.integrated.fontSize')`, and `e.affectsConfiguration('terminal.integrated.fontFamily')` since these affect font resolution
++- Changed config SHALL be sent as a `ConfigUpdateMessage` with only the changed fields
++
++#### Scenario: Changing fontSize pushes update to webview
++- Given a terminal is active in the sidebar
++- When the user changes `anywhereTerminal.fontSize` from 0 to 16
++- Then a `configUpdate` message with `{ fontSize: 16 }` is sent to the sidebar webview
++
++#### Scenario: Config changes apply to existing terminals
++- Given terminals are active in sidebar and panel
++- When the user changes `anywhereTerminal.cursorBlink` to false
++- Then both sidebar and panel webviews receive `configUpdate` with `{ cursorBlink: false }`
++
++#### Scenario: Unrelated config changes do not trigger updates
++- Given a terminal is active
++- When the user changes `editor.wordWrap` (unrelated setting)
++- Then no `configUpdate` message is sent
++
++### Requirement: settings-replace-hardcoded
++
++Both `TerminalViewProvider.onReady()` and `TerminalEditorProvider.onReady()` SHALL use `readTerminalSettings()` instead of hardcoded `{ fontSize: 14, cursorBlink: true, scrollback: 10000 }` when constructing the `init` message config.
++
++#### Scenario: Init message uses resolved settings
++- Given `anywhereTerminal.scrollback` is set to 5000
++- When a new terminal view is created
++- Then the `init` message config contains `scrollback: 5000`
++
++## MODIFIED Requirements
++
++### Requirement: terminal-config-interface
++
++> Original (from specs/ipc-wiring/spec.md): `TerminalConfig` contains `fontSize`, `cursorBlink`, `scrollback`.
++
++The `TerminalConfig` interface SHALL be extended to include a `fontFamily` field:
++```typescript
++interface TerminalConfig {
++  fontSize: number;
++  cursorBlink: boolean;
++  scrollback: number;
++  fontFamily: string;  // ADDED
++}
++```
++
++#### Scenario: fontFamily propagated in init message
++- Given `anywhereTerminal.fontFamily` is "Fira Code"
++- When a terminal is initialized
++- Then the init message config contains `fontFamily: "Fira Code"`
+diff --git a/cyberk-flow/changes/add-theme-settings/tasks.md b/cyberk-flow/changes/add-theme-settings/tasks.md
+new file mode 100644
+index 0000000..3f8ef1b
+--- /dev/null
++++ b/cyberk-flow/changes/add-theme-settings/tasks.md
+@@ -0,0 +1,80 @@
++<!-- Dependency graph: a track is a sequential chain of tasks executed by one sub-agent. -->
++<!-- Different tracks run as concurrent sub-agents. -->
++<!-- A track may contain tasks from different sections. -->
++<!-- Every Deps entry MUST have a matching arrow in the graph, and vice versa. -->
++<!-- Mermaid node IDs use `t` prefix (t1_1); labels show the task ID ("1_1"). -->
++
++```mermaid
++flowchart LR
++    subgraph TrackA["Track A — Extension Settings"]
++        t1_1["1_1"] --> t1_2["1_2"] --> t1_3["1_3"]
++    end
++    subgraph TrackB["Track B — Theme Enhancements"]
++        t2_1["2_1"] --> t2_2["2_2"]
++    end
++    subgraph TrackC["Track C — Integration"]
++        t3_1["3_1"] --> t3_2["3_2"]
++    end
++    t1_3 --> t3_1
++    t2_2 --> t3_1
++```
++
++## 1. Extension Settings
++
++- [x] 1_1 Define `contributes.configuration` schema in package.json and extend TerminalConfig interface
++  - **Track**: A
++  - **Refs**: specs/extension-settings/spec.md#settings-schema, specs/extension-settings/spec.md#terminal-config-interface
++  - **Done**: `package.json` has `contributes.configuration` with all 7 settings including descriptions and defaults; `TerminalConfig` in `src/types/messages.ts` includes `fontFamily: string` field
++  - **Test**: N/A — config-only (schema validated by VS Code at runtime)
++  - **Files**: `package.json`, `src/types/messages.ts`
++
++- [x] 1_2 Create settings reader module with font/shell/cwd resolution chains
++  - **Track**: A
++  - **Deps**: 1_1
++  - **Refs**: specs/extension-settings/spec.md#settings-reader, docs/design/theme-integration.md#§5
++  - **Done**: `readTerminalSettings()` returns resolved config with correct fallback precedence; font size clamped [6,100]; font family falls through chain; shell/cwd resolution works; invalid/missing values produce safe defaults
++  - **Test**: `src/settings/SettingsReader.test.ts` (unit) — test font size clamping, all fallback chains (extension → terminal.integrated → editor → default), empty vs configured values, invalid value handling
++  - **Files**: `src/settings/SettingsReader.ts`, `src/settings/SettingsReader.test.ts`
++
++- [x] 1_3 Wire `onDidChangeConfiguration` listener in extension.ts and replace hardcoded config in providers
++  - **Track**: A
++  - **Deps**: 1_2
++  - **Refs**: specs/extension-settings/spec.md#settings-change-listener, specs/extension-settings/spec.md#settings-replace-hardcoded
++  - **Done**: Config changes push `configUpdate` to ALL active webviews (sidebar, panel, editor); unrelated config changes do NOT trigger updates; `onReady()` in both providers uses `readTerminalSettings()` instead of hardcoded values; `createSession()` uses configured shell/args/cwd; existing location-aware background behavior is preserved (no regression)
++  - **Test**: `src/settings/SettingsReader.test.ts` (unit) — verify `affectsConfiguration` filtering logic, verify resolved config structure
++  - **Files**: `src/extension.ts`, `src/providers/TerminalViewProvider.ts`, `src/providers/TerminalEditorProvider.ts`
++
++## 2. Theme Enhancements
++
++- [x] 2_1 Add high-contrast theme detection and dynamic `minimumContrastRatio`
++  - **Track**: B
++  - **Refs**: specs/advanced-theme/spec.md#high-contrast-support, docs/design/theme-integration.md#§4
++  - **Done**: High-contrast themes detected via body class (`vscode-high-contrast`, `vscode-high-contrast-light`); `minimumContrastRatio` set to 7 for HC themes, 4.5 for normal; theme re-application on switch works; existing location-aware background and ANSI color reading are NOT regressed
++  - **Test**: N/A — webview DOM code not unit-testable without browser environment; verified by manual theme switching
++  - **Files**: `src/webview/main.ts`
++
++- [x] 2_2 Add `fontFamily` handling to webview `applyConfig()` and `createTerminal()`
++  - **Track**: B
++  - **Deps**: 2_1
++  - **Refs**: specs/advanced-theme/spec.md#font-config-application
++  - **Done**: `applyConfig()` applies `fontFamily` and re-fits all terminals; `createTerminal()` uses `config.fontFamily` with CSS variable fallback; empty fontFamily falls back to `--vscode-editor-font-family` CSS var → 'monospace'; `currentConfig` updated with fontFamily for future tab creation
++  - **Test**: N/A — webview DOM code; verified by manual config change
++  - **Files**: `src/webview/main.ts`
++
++## 3. Integration
++
++- [x] 3_1 Wire settings reader into SessionManager.createSession for shell/args/cwd and verify end-to-end config flow
++  - **Track**: C
++  - **Deps**: 1_3, 2_2
++  - **Refs**: specs/extension-settings/spec.md#settings-reader, specs/extension-settings/spec.md#settings-change-listener
++  - **Done**: New terminals use configured shell/args/cwd from settings; SessionManager.createSession accepts optional shell/args/cwd overrides; config changes propagate to webview and apply to both existing and new terminals; `pnpm run check-types` passes
++  - **Test**: `src/settings/SettingsReader.test.ts` (unit) — integration-level assertions on full config resolution
++  - **Files**: `src/session/SessionManager.ts`, `src/pty/PtyManager.ts`
++
++- [x] 3_2 Run full verification suite (type-check, lint, unit tests)
++  - **Track**: C
++  - **Deps**: 3_1
++  - **Refs**: cyberk-flow/project.md#Commands
++  - **Done**: `pnpm run check-types` exits 0; `pnpm run lint` exits 0; `pnpm run test:unit` exits 0
++  - **Test**: N/A — this IS the verification task
++  - **Files**: N/A
+diff --git a/cyberk-flow/changes/add-theme-settings/workflow.md b/cyberk-flow/changes/add-theme-settings/workflow.md
+new file mode 100644
+index 0000000..bcb9ab1
+--- /dev/null
++++ b/cyberk-flow/changes/add-theme-settings/workflow.md
+@@ -0,0 +1,69 @@
++# Workflow State: add-theme-settings
++
++> **Source of truth:** Workflow stages/gates → this file · Task completion → `tasks.md`
++
++## Plan
++
++- [x] 1. Context Review
++- [x] 2. Discovery
++- [x] **Gate: user approved direction**
++- [x] 3. Proposal
++  - [x] **MANDATORY** UI Impact & E2E decision recorded in `proposal.md`
++- [x] 4. Specs
++- [x] **Gate: user approved specs**
++- [-] 5. Architecture Review — Skip: LOW risk, no cross-cutting, no new deps
++  - [-] Design doc created — N/A (LOW risk)
++  - [-] Spikes completed — N/A (no HIGH risk items)
++- [-] **Gate: architecture reviewed** — N/A (skipped)
++- [x] 6. Tasks
++- [x] 7. Validation
++  - [x] **MANDATORY** Oracle reviewed: plan completeness, task deps, gaps, parallelization
++  - [x] `cf_validate` passes (or errors justified)
++- [x] **Gate: user approved plan**
++
++## Implement
++
++<!-- RULE: After completing each task, immediately mark it [x] in tasks.md AND log in Revision Log below. -->
++- [x] All tasks in tasks.md are complete (update tasks.md after EACH task)
++- [x] Verify Gate — run commands from `project.md` § Commands, **MUST execute and observe pass**:
++  - [x] Type check
++  - [x] Lint
++  - [x] Test
++  - [-] E2E — N/A (no user-visible UI flow changes)
++- [ ] Review — Oracle (correctness / architecture / security)
++- [ ] Review — Code Review (style / conventions / consistency)
++- [ ] **Gate: all tasks done + verify passed**
++
++## Archive
++
++- [ ] Post-merge sanity check
++- [ ] Extract knowledge + retrospective
++- [ ] Apply deltas: `cf_apply` <!-- auto-ticked by script -->
++- [ ] Archive change: `cf_archive` <!-- auto-ticked by script -->
++
++## Notes
++
++Complexity: small — 2 well-scoped features (theme enhancements + settings) with existing design docs and clear implementation patterns. No new dependencies, no architectural changes.
++
++Fastlane: auto-chose "small" complexity because both tasks are additive features in existing modules with detailed design docs already written. No ambiguity in requirements.
++
++Fastlane: auto-approved discovery — single viable approach following existing design docs (docs/design/theme-integration.md).
++
++Fastlane: auto-approved specs — requirements directly derived from PLAN.md tasks 3.1 and 3.2 with existing design patterns.
++
++Fastlane: skipped architecture review — LOW risk, no cross-cutting concerns, no new dependencies.
++
++Fastlane: auto-approved plan — 7 tasks across 2 tracks, appetite S (<=1d).
++
++## Revision Log
++
++| Date | Phase | What Changed | Why |
++| ---- | ----- | ------------ | --- |
++| 2026-03-07 | Context Review | Scaffolded change, classified as small | Initial triage |
++| 2026-03-07 | Discovery | Analyzed existing theme/settings code | Understand current state |
++| 2026-03-07 | Proposal | Defined scope and boundaries | Scope the work |
++| 2026-03-07 | Specs | Created 2 spec files | Define requirements |
++| 2026-03-07 | Tasks | Created 7 tasks in 2 tracks | Execution plan |
++| 2026-03-07 | Validation | Oracle review + cf_validate | Final quality check |
++| 2026-03-07 | Implement | Completed tasks 1_1–1_3, 2_1–2_2, 3_1–3_2 | All 7 tasks done |
++| 2026-03-07 | Implement | Verify gate passed: check-types, lint, test:unit | All green |
+diff --git a/package.json b/package.json
+index 24f11cc..7b0f889 100644
+--- a/package.json
++++ b/package.json
+@@ -42,6 +42,49 @@
+   ],
+   "main": "./dist/extension.js",
+   "contributes": {
++    "configuration": {
++      "title": "AnyWhere Terminal",
++      "properties": {
++        "anywhereTerminal.shell.macOS": {
++          "type": "string",
++          "default": "",
++          "description": "Custom shell path for macOS. Leave empty to auto-detect (uses $SHELL → /bin/zsh → /bin/bash → /bin/sh)."
++        },
++        "anywhereTerminal.shell.args": {
++          "type": "array",
++          "items": {
++            "type": "string"
++          },
++          "default": [],
++          "description": "Custom shell arguments. Leave empty to use defaults (e.g., --login for zsh/bash)."
++        },
++        "anywhereTerminal.scrollback": {
++          "type": "number",
++          "default": 10000,
++          "description": "Maximum number of lines in the scrollback buffer."
++        },
++        "anywhereTerminal.fontSize": {
++          "type": "number",
++          "default": 0,
++          "description": "Font size in pixels. Set to 0 to inherit from VS Code (terminal.integrated.fontSize → editor.fontSize → 14)."
++        },
++        "anywhereTerminal.fontFamily": {
++          "type": "string",
++          "default": "",
++          "description": "Font family for the terminal. Leave empty to inherit from VS Code (terminal.integrated.fontFamily → editor.fontFamily → monospace)."
++        },
++        "anywhereTerminal.cursorBlink": {
++          "type": "boolean",
++          "default": true,
++          "description": "Whether the terminal cursor should blink."
++        },
++        "anywhereTerminal.defaultCwd": {
++          "type": "string",
++          "default": "",
++          "description": "Default working directory for new terminals. Leave empty to use workspace root or home directory."
++        }
++      }
++    },
+     "viewsContainers": {
+       "activitybar": [
+         {
+diff --git a/src/extension.ts b/src/extension.ts
+index 6a92913..702c26d 100644
+--- a/src/extension.ts
++++ b/src/extension.ts
+@@ -2,6 +2,7 @@ import * as vscode from "vscode";
+ import { TerminalEditorProvider } from "./providers/TerminalEditorProvider";
+ import { TerminalViewProvider } from "./providers/TerminalViewProvider";
+ import { SessionManager } from "./session/SessionManager";
++import { affectsTerminalConfig, readTerminalConfig, readTerminalSettings } from "./settings/SettingsReader";
+ 
+ export function activate(context: vscode.ExtensionContext) {
+   // Create shared SessionManager (singleton)
+@@ -70,7 +71,12 @@ export function activate(context: vscode.ExtensionContext) {
+       return;
+     }
+     const viewId = provider.getViewId();
+-    const newSessionId = sessionManager.createSession(viewId, view.webview);
++    const settings = readTerminalSettings();
++    const newSessionId = sessionManager.createSession(viewId, view.webview, {
++      shell: settings.shell,
++      shellArgs: settings.shellArgs,
++      cwd: settings.cwd,
++    });
+     const newSession = sessionManager.getSession(newSessionId);
+     if (newSession) {
+       safePostMessage(view.webview, {
+@@ -182,6 +188,34 @@ export function activate(context: vscode.ExtensionContext) {
+     }),
+   );
+ 
++  // ─── Configuration Change Listener ────────────────────────────────
++  // Push updated config to all active webviews when relevant settings change.
++  // See: specs/extension-settings/spec.md#settings-change-listener
++
++  context.subscriptions.push(
++    vscode.workspace.onDidChangeConfiguration((e) => {
++      if (!affectsTerminalConfig(e)) {
++        return;
++      }
++
++      const config = readTerminalConfig();
++      const configUpdateMessage = { type: "configUpdate" as const, config };
++
++      // Push to sidebar and panel providers
++      for (const provider of [sidebarProvider, panelProvider]) {
++        const view = provider.view;
++        if (view) {
++          safePostMessage(view.webview, configUpdateMessage);
++        }
++      }
++
++      // Push to all editor panels
++      for (const panel of TerminalEditorProvider.getActivePanels()) {
++        safePostMessage(panel.webview, configUpdateMessage);
++      }
++    }),
++  );
++
+   // ─── Focus & Move Commands ──────────────────────────────────────
+ 
+   context.subscriptions.push(
+diff --git a/src/providers/TerminalEditorProvider.ts b/src/providers/TerminalEditorProvider.ts
+index 0d39ebc..9ac4042 100644
+--- a/src/providers/TerminalEditorProvider.ts
++++ b/src/providers/TerminalEditorProvider.ts
+@@ -1,6 +1,7 @@
+ import * as crypto from "node:crypto";
+ import * as vscode from "vscode";
+ import type { SessionManager } from "../session/SessionManager";
++import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
+ import type { WebViewToExtensionMessage } from "../types/messages";
+ import { getTerminalHtml } from "./webviewHtml";
+ 
+@@ -17,6 +18,14 @@ import { getTerminalHtml } from "./webviewHtml";
+ export class TerminalEditorProvider {
+   public static readonly viewType = "anywhereTerminal.editor";
+ 
++  /** Track all active editor panels for config updates. */
++  private static readonly _activePanels = new Set<vscode.WebviewPanel>();
++
++  /** Get all active editor panels (for pushing config updates). */
++  static getActivePanels(): ReadonlySet<vscode.WebviewPanel> {
++    return TerminalEditorProvider._activePanels;
++  }
++
+   /** The unique view ID for this editor panel's sessions. */
+   private readonly _viewId: string;
+   /** Whether the webview has sent the 'ready' message. Gates outbound messages. */
+@@ -54,6 +63,9 @@ export class TerminalEditorProvider {
+ 
+     const _provider = new TerminalEditorProvider(context.extensionUri, sessionManager, panel);
+ 
++    // Track this panel for config updates
++    TerminalEditorProvider._activePanels.add(panel);
++
+     // Return a disposable that cleans up via panel dispose (which triggers onDidDispose → destroyAllForView)
+     return {
+       dispose: () => {
+@@ -92,6 +104,7 @@ export class TerminalEditorProvider {
+       for (const d of disposables) {
+         d.dispose();
+       }
++      TerminalEditorProvider._activePanels.delete(this._panel);
+       this.sessionManager.destroyAllForView(this._viewId);
+     });
+   }
+@@ -145,7 +158,12 @@ export class TerminalEditorProvider {
+           break;
+ 
+         case "createTab": {
+-          const newSessionId = this.sessionManager.createSession(this._viewId, this._panel.webview);
++          const createSettings = readTerminalSettings();
++          const newSessionId = this.sessionManager.createSession(this._viewId, this._panel.webview, {
++            shell: createSettings.shell,
++            shellArgs: createSettings.shellArgs,
++            cwd: createSettings.cwd,
++          });
+           const newSession = this.sessionManager.getSession(newSessionId);
+           if (newSession) {
+             this.safePostMessage({
+@@ -195,8 +213,13 @@ export class TerminalEditorProvider {
+     this._ready = true;
+ 
+     try {
+-      // Create initial session via SessionManager
+-      this.sessionManager.createSession(this._viewId, this._panel.webview);
++      // Create initial session via SessionManager with resolved settings
++      const settings = readTerminalSettings();
++      this.sessionManager.createSession(this._viewId, this._panel.webview, {
++        shell: settings.shell,
++        shellArgs: settings.shellArgs,
++        cwd: settings.cwd,
++      });
+ 
+       // Get tabs for the init message
+       const tabs = this.sessionManager.getTabsForView(this._viewId);
+@@ -204,11 +227,7 @@ export class TerminalEditorProvider {
+       this.safePostMessage({
+         type: "init",
+         tabs,
+-        config: {
+-          fontSize: 14,
+-          cursorBlink: true,
+-          scrollback: 10000,
+-        },
++        config: readTerminalConfig(),
+       });
+     } catch (err) {
+       console.error("[AnyWhere Terminal] Failed to initialize editor terminal:", err);
+diff --git a/src/providers/TerminalViewProvider.ts b/src/providers/TerminalViewProvider.ts
+index 48fe52b..462546c 100644
+--- a/src/providers/TerminalViewProvider.ts
++++ b/src/providers/TerminalViewProvider.ts
+@@ -1,5 +1,6 @@
+ import * as vscode from "vscode";
+ import type { SessionManager } from "../session/SessionManager";
++import { readTerminalConfig, readTerminalSettings } from "../settings/SettingsReader";
+ import type { WebViewToExtensionMessage } from "../types/messages";
+ import { getTerminalHtml } from "./webviewHtml";
+ 
+@@ -151,7 +152,12 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
+ 
+         case "createTab": {
+           const viewId = this.getViewId();
+-          const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview);
++          const settings = readTerminalSettings();
++          const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, {
++            shell: settings.shell,
++            shellArgs: settings.shellArgs,
++            cwd: settings.cwd,
++          });
+           const newSession = this.sessionManager.getSession(newSessionId);
+           if (newSession) {
+             this.safePostMessage(webviewView.webview, {
+@@ -192,7 +198,13 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
+           ) {
+             const splitMsg = message as { direction: "horizontal" | "vertical"; sourcePaneId: string };
+             const viewId = this.getViewId();
+-            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, { isSplitPane: true });
++            const splitSettings = readTerminalSettings();
++            const newSessionId = this.sessionManager.createSession(viewId, webviewView.webview, {
++              isSplitPane: true,
++              shell: splitSettings.shell,
++              shellArgs: splitSettings.shellArgs,
++              cwd: splitSettings.cwd,
++            });
+             const newSession = this.sessionManager.getSession(newSessionId);
+             if (newSession) {
+               this.safePostMessage(webviewView.webview, {
+@@ -250,11 +262,7 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
+         this.safePostMessage(webviewView.webview, {
+           type: "init",
+           tabs: existingTabs,
+-          config: {
+-            fontSize: 14,
+-            cursorBlink: true,
+-            scrollback: 10000,
+-          },
++          config: readTerminalConfig(),
+         });
+ 
+         // Send 'restore' messages with scrollback data for each session
+@@ -272,21 +280,22 @@ export class TerminalViewProvider implements vscode.WebviewViewProvider {
+         // Resume output flushing for the view
+         this.sessionManager.resumeOutputForView(viewId);
+       } else {
+-        // First-time creation: create initial session
+-        this.sessionManager.createSession(viewId, webviewView.webview);
++        // First-time creation: create initial session with resolved settings
++        const settings = readTerminalSettings();
++        this.sessionManager.createSession(viewId, webviewView.webview, {
++          shell: settings.shell,
++          shellArgs: settings.shellArgs,
++          cwd: settings.cwd,
++        });
+ 
+         // Get tabs for the init message
+         const tabs = this.sessionManager.getTabsForView(viewId);
+ 
+-        // Send 'init' message to the webview with default config
++        // Send 'init' message to the webview with resolved config
+         this.safePostMessage(webviewView.webview, {
+           type: "init",
+           tabs,
+-          config: {
+-            fontSize: 14,
+-            cursorBlink: true,
+-            scrollback: 10000,
+-          },
++          config: readTerminalConfig(),
+         });
+       }
+     } catch (err) {
+diff --git a/src/session/SessionManager.ts b/src/session/SessionManager.ts
+index 19be114..901496e 100644
+--- a/src/session/SessionManager.ts
++++ b/src/session/SessionManager.ts
+@@ -91,9 +91,16 @@ export class SessionManager {
+    * @param options.isSplitPane If true, marks the session as a split pane.
+    *   Split pane sessions are excluded from getTabsForView() and do NOT
+    *   deactivate existing sessions.
++   * @param options.shell Optional shell path override (from settings).
++   * @param options.shellArgs Optional shell arguments override (from settings).
++   * @param options.cwd Optional working directory override (from settings).
+    * @returns The session ID (UUID)
+    */
+-  createSession(viewId: string, webview: MessageSender, options?: { isSplitPane?: boolean }): string {
++  createSession(
++    viewId: string,
++    webview: MessageSender,
++    options?: { isSplitPane?: boolean; shell?: string; shellArgs?: string[]; cwd?: string },
++  ): string {
+     const isSplitPane = options?.isSplitPane ?? false;
+     const id = crypto.randomUUID();
+     const number = this.findAvailableNumber();
+@@ -101,13 +108,27 @@ export class SessionManager {
+ 
+     // Load PTY infrastructure
+     const nodePty = PtyManager.loadNodePty();
+-    const { shell, args } = PtyManager.detectShell();
++
++    // Use provided shell/args or auto-detect
++    const shell = options?.shell;
++    const shellArgs = options?.shellArgs;
++    let resolvedShell: string;
++    let resolvedArgs: string[];
++    if (shell) {
++      resolvedShell = shell;
++      resolvedArgs = shellArgs ?? [];
++    } else {
++      const detected = PtyManager.detectShell();
++      resolvedShell = detected.shell;
++      resolvedArgs = shellArgs && shellArgs.length > 0 ? shellArgs : detected.args;
++    }
++
+     const env = PtyManager.buildEnvironment();
+-    const cwd = PtyManager.resolveWorkingDirectory();
++    const cwd = options?.cwd || PtyManager.resolveWorkingDirectory();
+ 
+     // Spawn PTY
+     const pty = new PtySession(id);
+-    pty.spawn(nodePty, shell, args, { cwd, env });
++    pty.spawn(nodePty, resolvedShell, resolvedArgs, { cwd, env });
+ 
+     // Create OutputBuffer
+     const outputBuffer = new OutputBuffer(id, webview, pty);
+diff --git a/src/settings/SettingsReader.test.ts b/src/settings/SettingsReader.test.ts
+new file mode 100644
+index 0000000..5328a6e
+--- /dev/null
++++ b/src/settings/SettingsReader.test.ts
+@@ -0,0 +1,285 @@
++// src/settings/SettingsReader.test.ts — Unit tests for SettingsReader
++import os from "node:os";
++import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
++import { __resetAll, __setConfigValues, __setWorkspaceFolders } from "../test/__mocks__/vscode";
++import { affectsTerminalConfig, readTerminalConfig, readTerminalSettings } from "./SettingsReader";
++
++// Mock node:fs for PtyManager's detectShell
++vi.mock("node:fs", () => {
++  return {
++    default: {
++      statSync: vi.fn(),
++    },
++    statSync: vi.fn(),
++  };
++});
++
++import * as fs from "node:fs";
++
++const mockedStatSync = vi.mocked(fs.statSync);
++
++// ─── Test Setup ─────────────────────────────────────────────────────
++
++beforeEach(() => {
++  __resetAll();
++  vi.clearAllMocks();
++  // Default: make /bin/zsh exist for shell detection
++  mockedStatSync.mockImplementation((p) => {
++    const pathStr = typeof p === "string" ? p : p.toString();
++    if (pathStr === "/bin/zsh" || pathStr === "/bin/bash" || pathStr === "/bin/sh") {
++      return { isFile: () => true, mode: 0o755 } as unknown as fs.Stats;
++    }
++    throw new Error("ENOENT");
++  });
++});
++
++afterEach(() => {
++  vi.restoreAllMocks();
++});
++
++// ─── Font Size Resolution ───────────────────────────────────────────
++
++describe("readTerminalSettings — font size resolution", () => {
++  it("uses anywhereTerminal.fontSize when > 0", () => {
++    __setConfigValues({ "anywhereTerminal.fontSize": 18 });
++    const settings = readTerminalSettings();
++    expect(settings.fontSize).toBe(18);
++  });
++
++  it("falls back to terminal.integrated.fontSize when extension fontSize is 0", () => {
++    __setConfigValues({
++      "anywhereTerminal.fontSize": 0,
++      "terminal.integrated.fontSize": 16,
++    });
++    const settings = readTerminalSettings();
++    expect(settings.fontSize).toBe(16);
++  });
++
++  it("falls back to editor.fontSize when both extension and terminal fontSize are 0", () => {
++    __setConfigValues({
++      "anywhereTerminal.fontSize": 0,
++      "terminal.integrated.fontSize": 0,
++      "editor.fontSize": 20,
++    });
++    const settings = readTerminalSettings();
++    expect(settings.fontSize).toBe(20);
++  });
++
++  it("uses default 14 when all font sizes are 0 or unset", () => {
++    __setConfigValues({});
++    const settings = readTerminalSettings();
++    expect(settings.fontSize).toBe(14);
++  });
++
++  it("clamps font size to minimum 6", () => {
++    __setConfigValues({ "anywhereTerminal.fontSize": 2 });
++    const settings = readTerminalSettings();
++    expect(settings.fontSize).toBe(6);
++  });
++
++  it("clamps font size to maximum 100", () => {
++    __setConfigValues({ "anywhereTerminal.fontSize": 200 });
++    const settings = readTerminalSettings();
++    expect(settings.fontSize).toBe(100);
++  });
++
++  it("clamps font size at exactly 6", () => {
++    __setConfigValues({ "anywhereTerminal.fontSize": 6 });
++    const settings = readTerminalSettings();
++    expect(settings.fontSize).toBe(6);
++  });
++
++  it("clamps font size at exactly 100", () => {
++    __setConfigValues({ "anywhereTerminal.fontSize": 100 });
++    const settings = readTerminalSettings();
++    expect(settings.fontSize).toBe(100);
++  });
++});
++
++// ─── Font Family Resolution ─────────────────────────────────────────
++
++describe("readTerminalSettings — font family resolution", () => {
++  it("uses anywhereTerminal.fontFamily when non-empty", () => {
++    __setConfigValues({ "anywhereTerminal.fontFamily": "Fira Code" });
++    const settings = readTerminalSettings();
++    expect(settings.fontFamily).toBe("Fira Code");
++  });
++
++  it("falls back to terminal.integrated.fontFamily when extension fontFamily is empty", () => {
++    __setConfigValues({
++      "anywhereTerminal.fontFamily": "",
++      "terminal.integrated.fontFamily": "JetBrains Mono",
++    });
++    const settings = readTerminalSettings();
++    expect(settings.fontFamily).toBe("JetBrains Mono");
++  });
++
++  it("falls back to editor.fontFamily when both extension and terminal fontFamily are empty", () => {
++    __setConfigValues({
++      "anywhereTerminal.fontFamily": "",
++      "terminal.integrated.fontFamily": "",
++      "editor.fontFamily": "Cascadia Code",
++    });
++    const settings = readTerminalSettings();
++    expect(settings.fontFamily).toBe("Cascadia Code");
++  });
++
++  it("uses default 'monospace' when all font families are empty or unset", () => {
++    __setConfigValues({});
++    const settings = readTerminalSettings();
++    expect(settings.fontFamily).toBe("monospace");
++  });
++
++  it("trims whitespace from font family", () => {
++    __setConfigValues({ "anywhereTerminal.fontFamily": "  Fira Code  " });
++    const settings = readTerminalSettings();
++    expect(settings.fontFamily).toBe("Fira Code");
++  });
++});
++
++// ─── Other Settings ─────────────────────────────────────────────────
++
++describe("readTerminalSettings — other settings", () => {
++  it("reads cursorBlink with default true", () => {
++    __setConfigValues({});
++    const settings = readTerminalSettings();
++    expect(settings.cursorBlink).toBe(true);
++  });
++
++  it("reads cursorBlink when set to false", () => {
++    __setConfigValues({ "anywhereTerminal.cursorBlink": false });
++    const settings = readTerminalSettings();
++    expect(settings.cursorBlink).toBe(false);
++  });
++
++  it("reads scrollback with default 10000", () => {
++    __setConfigValues({});
++    const settings = readTerminalSettings();
++    expect(settings.scrollback).toBe(10000);
++  });
++
++  it("reads custom scrollback value", () => {
++    __setConfigValues({ "anywhereTerminal.scrollback": 5000 });
++    const settings = readTerminalSettings();
++    expect(settings.scrollback).toBe(5000);
++  });
++});
++
++// ─── Shell Resolution ───────────────────────────────────────────────
++
++describe("readTerminalSettings — shell resolution", () => {
++  it("uses custom shell when configured", () => {
++    __setConfigValues({ "anywhereTerminal.shell.macOS": "/usr/local/bin/fish" });
++    const settings = readTerminalSettings();
++    expect(settings.shell).toBe("/usr/local/bin/fish");
++  });
++
++  it("auto-detects shell when custom shell is empty", () => {
++    __setConfigValues({ "anywhereTerminal.shell.macOS": "" });
++    const settings = readTerminalSettings();
++    // Should detect from $SHELL or fallback chain
++    expect(settings.shell).toBeTruthy();
++  });
++
++  it("uses custom args when configured with custom shell", () => {
++    __setConfigValues({
++      "anywhereTerminal.shell.macOS": "/usr/local/bin/fish",
++      "anywhereTerminal.shell.args": ["-l", "--init-command", "echo hi"],
++    });
++    const settings = readTerminalSettings();
++    expect(settings.shellArgs).toEqual(["-l", "--init-command", "echo hi"]);
++  });
++
++  it("uses detected args when custom args are empty", () => {
++    __setConfigValues({
++      "anywhereTerminal.shell.macOS": "",
++      "anywhereTerminal.shell.args": [],
++    });
++    const settings = readTerminalSettings();
++    // Should use detected shell's default args
++    expect(settings.shellArgs).toBeDefined();
++  });
++});
++
++// ─── CWD Resolution ─────────────────────────────────────────────────
++
++describe("readTerminalSettings — CWD resolution", () => {
++  it("uses custom CWD when configured", () => {
++    __setConfigValues({ "anywhereTerminal.defaultCwd": "/tmp/my-project" });
++    const settings = readTerminalSettings();
++    expect(settings.cwd).toBe("/tmp/my-project");
++  });
++
++  it("falls back to workspace root when CWD is empty", () => {
++    __setConfigValues({ "anywhereTerminal.defaultCwd": "" });
++    __setWorkspaceFolders([{ uri: { fsPath: "/projects/my-app" } }]);
++    const settings = readTerminalSettings();
++    expect(settings.cwd).toBe("/projects/my-app");
++  });
++
++  it("falls back to home directory when no workspace and no custom CWD", () => {
++    __setConfigValues({ "anywhereTerminal.defaultCwd": "" });
++    __setWorkspaceFolders(undefined);
++    const settings = readTerminalSettings();
++    expect(settings.cwd).toBe(os.homedir());
++  });
++});
++
++// ─── readTerminalConfig ─────────────────────────────────────────────
++
++describe("readTerminalConfig", () => {
++  it("returns only TerminalConfig fields", () => {
++    __setConfigValues({
++      "anywhereTerminal.fontSize": 16,
++      "anywhereTerminal.fontFamily": "Fira Code",
++      "anywhereTerminal.cursorBlink": false,
++      "anywhereTerminal.scrollback": 5000,
++    });
++    const config = readTerminalConfig();
++    expect(config).toEqual({
++      fontSize: 16,
++      fontFamily: "Fira Code",
++      cursorBlink: false,
++      scrollback: 5000,
++    });
++    // Should NOT have shell/cwd fields
++    expect("shell" in config).toBe(false);
++    expect("cwd" in config).toBe(false);
++  });
++});
++
++// ─── affectsTerminalConfig ──────────────────────────────────────────
++
++describe("affectsTerminalConfig", () => {
++  const makeEvent = (sections: string[]) => ({
++    affectsConfiguration: (section: string) => sections.some((s) => s === section || s.startsWith(`${section}.`)),
++  });
++
++  it("returns true for anywhereTerminal changes", () => {
++    expect(affectsTerminalConfig(makeEvent(["anywhereTerminal.fontSize"]))).toBe(true);
++  });
++
++  it("returns true for editor.fontSize changes", () => {
++    expect(affectsTerminalConfig(makeEvent(["editor.fontSize"]))).toBe(true);
++  });
++
++  it("returns true for editor.fontFamily changes", () => {
++    expect(affectsTerminalConfig(makeEvent(["editor.fontFamily"]))).toBe(true);
++  });
++
++  it("returns true for terminal.integrated.fontSize changes", () => {
++    expect(affectsTerminalConfig(makeEvent(["terminal.integrated.fontSize"]))).toBe(true);
++  });
++
++  it("returns true for terminal.integrated.fontFamily changes", () => {
++    expect(affectsTerminalConfig(makeEvent(["terminal.integrated.fontFamily"]))).toBe(true);
++  });
++
++  it("returns false for unrelated changes", () => {
++    expect(affectsTerminalConfig(makeEvent(["editor.wordWrap"]))).toBe(false);
++  });
++
++  it("returns false for completely unrelated section", () => {
++    expect(affectsTerminalConfig(makeEvent(["workbench.colorTheme"]))).toBe(false);
++  });
++});
+diff --git a/src/settings/SettingsReader.ts b/src/settings/SettingsReader.ts
+new file mode 100644
+index 0000000..d12d44b
+--- /dev/null
++++ b/src/settings/SettingsReader.ts
+@@ -0,0 +1,209 @@
++// src/settings/SettingsReader.ts — Reads and resolves extension settings from VS Code configuration
++// See: specs/extension-settings/spec.md#settings-reader
++
++import * as os from "node:os";
++import * as vscode from "vscode";
++import * as PtyManager from "../pty/PtyManager";
++import type { TerminalConfig } from "../types/messages";
++
++// ─── Constants ──────────────────────────────────────────────────────
++
++/** Minimum allowed font size in pixels. */
++const FONT_SIZE_MIN = 6;
++
++/** Maximum allowed font size in pixels. */
++const FONT_SIZE_MAX = 100;
++
++/** Default font size when no setting is configured. */
++const DEFAULT_FONT_SIZE = 14;
++
++/** Default scrollback buffer size. */
++const DEFAULT_SCROLLBACK = 10000;
++
++/** Default font family. */
++const DEFAULT_FONT_FAMILY = "monospace";
++
++// ─── Resolved Settings Type ─────────────────────────────────────────
++
++/** Fully resolved terminal settings including shell/cwd. */
++export interface ResolvedTerminalSettings extends TerminalConfig {
++  /** Resolved shell path */
++  shell: string;
++  /** Resolved shell arguments */
++  shellArgs: string[];
++  /** Resolved working directory */
++  cwd: string;
++}
++
++// ─── Public API ─────────────────────────────────────────────────────
++
++/**
++ * Read all `anywhereTerminal.*` settings and resolve them with fallback chains.
++ *
++ * Font size resolution: anywhereTerminal.fontSize (if >0) → terminal.integrated.fontSize (if >0) → editor.fontSize (if >0) → 14
++ * Font family resolution: anywhereTerminal.fontFamily (if non-empty) → terminal.integrated.fontFamily (if non-empty) → editor.fontFamily (if non-empty) → 'monospace'
++ * Shell resolution: anywhereTerminal.shell.macOS (if non-empty) → auto-detect via PtyManager.detectShell()
++ * CWD resolution: anywhereTerminal.defaultCwd (if non-empty and valid) → workspace root → home directory
++ */
++export function readTerminalSettings(): ResolvedTerminalSettings {
++  const config = vscode.workspace.getConfiguration("anywhereTerminal");
++  const terminalConfig = vscode.workspace.getConfiguration("terminal.integrated");
++  const editorConfig = vscode.workspace.getConfiguration("editor");
++
++  // Font size resolution chain
++  const fontSize = resolveFontSize(
++    config.get<number>("fontSize"),
++    terminalConfig.get<number>("fontSize"),
++    editorConfig.get<number>("fontSize"),
++  );
++
++  // Font family resolution chain
++  const fontFamily = resolveFontFamily(
++    config.get<string>("fontFamily"),
++    terminalConfig.get<string>("fontFamily"),
++    editorConfig.get<string>("fontFamily"),
++  );
++
++  // Cursor blink
++  const cursorBlink = config.get<boolean>("cursorBlink") ?? true;
++
++  // Scrollback
++  const scrollback = config.get<number>("scrollback") ?? DEFAULT_SCROLLBACK;
++
++  // Shell resolution
++  const { shell, shellArgs } = resolveShell(config.get<string>("shell.macOS"), config.get<string[]>("shell.args"));
++
++  // CWD resolution
++  const cwd = resolveCwd(config.get<string>("defaultCwd"));
++
++  return {
++    fontSize,
++    fontFamily,
++    cursorBlink,
++    scrollback,
++    shell,
++    shellArgs,
++    cwd,
++  };
++}
++
++/**
++ * Read only the TerminalConfig portion of settings (for init/configUpdate messages).
++ * Does not resolve shell/cwd.
++ */
++export function readTerminalConfig(): TerminalConfig {
++  const settings = readTerminalSettings();
++  return {
++    fontSize: settings.fontSize,
++    fontFamily: settings.fontFamily,
++    cursorBlink: settings.cursorBlink,
++    scrollback: settings.scrollback,
++  };
++}
++
++/**
++ * Check whether a configuration change event affects any settings
++ * that would require a config update to webviews.
++ */
++export function affectsTerminalConfig(e: vscode.ConfigurationChangeEvent): boolean {
++  return (
++    e.affectsConfiguration("anywhereTerminal") ||
++    e.affectsConfiguration("editor.fontSize") ||
++    e.affectsConfiguration("editor.fontFamily") ||
++    e.affectsConfiguration("terminal.integrated.fontSize") ||
++    e.affectsConfiguration("terminal.integrated.fontFamily")
++  );
++}
++
++// ─── Private: Resolution Chains ─────────────────────────────────────
++
++/**
++ * Resolve font size through the fallback chain with clamping.
++ * anywhereTerminal.fontSize (if >0) → terminal.integrated.fontSize (if >0) → editor.fontSize (if >0) → 14
++ * Result is clamped to [6, 100].
++ */
++function resolveFontSize(
++  extensionFontSize: number | undefined,
++  terminalFontSize: number | undefined,
++  editorFontSize: number | undefined,
++): number {
++  let resolved = DEFAULT_FONT_SIZE;
++
++  if (extensionFontSize !== undefined && extensionFontSize > 0) {
++    resolved = extensionFontSize;
++  } else if (terminalFontSize !== undefined && terminalFontSize > 0) {
++    resolved = terminalFontSize;
++  } else if (editorFontSize !== undefined && editorFontSize > 0) {
++    resolved = editorFontSize;
++  }
++
++  return clampFontSize(resolved);
++}
++
++/**
++ * Resolve font family through the fallback chain.
++ * anywhereTerminal.fontFamily (if non-empty) → terminal.integrated.fontFamily (if non-empty) → editor.fontFamily (if non-empty) → 'monospace'
++ */
++function resolveFontFamily(
++  extensionFontFamily: string | undefined,
++  terminalFontFamily: string | undefined,
++  editorFontFamily: string | undefined,
++): string {
++  if (extensionFontFamily?.trim()) {
++    return extensionFontFamily.trim();
++  }
++  if (terminalFontFamily?.trim()) {
++    return terminalFontFamily.trim();
++  }
++  if (editorFontFamily?.trim()) {
++    return editorFontFamily.trim();
++  }
++  return DEFAULT_FONT_FAMILY;
++}
++
++/**
++ * Resolve shell path and arguments.
++ * anywhereTerminal.shell.macOS (if non-empty) → auto-detect via PtyManager.detectShell()
++ */
++function resolveShell(
++  customShell: string | undefined,
++  customArgs: string[] | undefined,
++): { shell: string; shellArgs: string[] } {
++  if (customShell?.trim()) {
++    return {
++      shell: customShell.trim(),
++      shellArgs: customArgs ?? [],
++    };
++  }
++
++  // Fall back to auto-detection
++  const detected = PtyManager.detectShell();
++  return {
++    shell: detected.shell,
++    shellArgs: customArgs && customArgs.length > 0 ? customArgs : detected.args,
++  };
++}
++
++/**
++ * Resolve working directory.
++ * anywhereTerminal.defaultCwd (if non-empty) → workspace root → home directory
++ */
++function resolveCwd(customCwd: string | undefined): string {
++  if (customCwd?.trim()) {
++    return customCwd.trim();
++  }
++
++  const folders = vscode.workspace.workspaceFolders;
++  if (folders && folders.length > 0) {
++    return folders[0].uri.fsPath;
++  }
++
++  return os.homedir();
++}
++
++/**
++ * Clamp font size to the valid range [6, 100].
++ */
++function clampFontSize(size: number): number {
++  return Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, size));
++}
+diff --git a/src/test/__mocks__/vscode.ts b/src/test/__mocks__/vscode.ts
+index 1f9bd1c..7e4e0fc 100644
+--- a/src/test/__mocks__/vscode.ts
++++ b/src/test/__mocks__/vscode.ts
+@@ -19,10 +19,49 @@ export const env = {
+ 
+ // ─── workspace ──────────────────────────────────────────────────────
+ 
++/** Mock configuration store — maps section.key to value. */
++let _mockConfigValues: Record<string, unknown> = {};
++
++/** Mock configuration change handlers. */
++const _configChangeHandlers: Array<(e: { affectsConfiguration: (section: string) => boolean }) => void> = [];
++
++/** Creates a mock configuration object for a given section. */
++function createMockConfiguration(section: string) {
++  return {
++    get: <T>(key: string, defaultValue?: T): T | undefined => {
++      const fullKey = section ? `${section}.${key}` : key;
++      const value = _mockConfigValues[fullKey];
++      return (value !== undefined ? value : defaultValue) as T | undefined;
++    },
++    has: (key: string): boolean => {
++      const fullKey = section ? `${section}.${key}` : key;
++      return fullKey in _mockConfigValues;
++    },
++    update: () => Promise.resolve(),
++    inspect: () => undefined,
++  };
++}
++
+ export const workspace: {
+   workspaceFolders: Array<{ uri: { fsPath: string } }> | undefined;
++  getConfiguration: (section?: string) => ReturnType<typeof createMockConfiguration>;
++  onDidChangeConfiguration: (handler: (e: { affectsConfiguration: (section: string) => boolean }) => void) => {
++    dispose: () => void;
++  };
+ } = {
+   workspaceFolders: undefined,
++  getConfiguration: (section = "") => createMockConfiguration(section),
++  onDidChangeConfiguration: (handler) => {
++    _configChangeHandlers.push(handler);
++    return {
++      dispose: () => {
++        const idx = _configChangeHandlers.indexOf(handler);
++        if (idx !== -1) {
++          _configChangeHandlers.splice(idx, 1);
++        }
++      },
++    };
++  },
+ };
+ 
+ // ─── extensions ─────────────────────────────────────────────────────
+@@ -125,9 +164,27 @@ export function __setAppRoot(appRoot: string): void {
+   env.appRoot = appRoot;
+ }
+ 
++/** Set mock configuration values for testing. Keys should be fully qualified (e.g., "anywhereTerminal.fontSize"). */
++export function __setConfigValues(values: Record<string, unknown>): void {
++  _mockConfigValues = { ...values };
++}
++
++/** Fire a mock configuration change event. */
++export function __fireConfigChange(affectedSections: string[]): void {
++  const event = {
++    affectsConfiguration: (section: string) =>
++      affectedSections.some((s) => s === section || s.startsWith(`${section}.`)),
++  };
++  for (const handler of _configChangeHandlers) {
++    handler(event);
++  }
++}
++
+ /** Reset all mock state to defaults. */
+ export function __resetAll(): void {
+   env.appRoot = "/mock/vscode/app";
+   workspace.workspaceFolders = undefined;
+   _mockExtension = undefined;
++  _mockConfigValues = {};
++  _configChangeHandlers.length = 0;
+ }
+diff --git a/src/types/messages.ts b/src/types/messages.ts
+index 556326d..c68c02e 100644
+--- a/src/types/messages.ts
++++ b/src/types/messages.ts
+@@ -12,6 +12,8 @@ export interface TerminalConfig {
+   cursorBlink: boolean;
+   /** Maximum number of lines in the scrollback buffer */
+   scrollback: number;
++  /** Font family (empty string = inherit from VS Code) */
++  fontFamily: string;
+ }
+ 
+ // ─── WebView → Extension Messages ───────────────────────────────────
+diff --git a/src/webview/main.ts b/src/webview/main.ts
+index 3065186..00845af 100644
+--- a/src/webview/main.ts
++++ b/src/webview/main.ts
+@@ -82,6 +82,7 @@ let currentConfig: TerminalConfig = {
+   fontSize: 14,
+   cursorBlink: true,
+   scrollback: 10000,
++  fontFamily: "",
+ };
+ 
+ /** Flow control: accumulated chars since last ack. */
+@@ -485,13 +486,34 @@ function getXtermTheme(location: TerminalLocation = "sidebar"): Record<string, s
+   };
+ }
+ 
++/**
++ * Detect whether the current VS Code theme is a high-contrast theme.
++ * High-contrast themes add `vscode-high-contrast` or `vscode-high-contrast-light` class to body.
++ */
++function isHighContrastTheme(): boolean {
++  return (
++    document.body.classList.contains("vscode-high-contrast") ||
++    document.body.classList.contains("vscode-high-contrast-light")
++  );
++}
++
++/**
++ * Get the appropriate minimum contrast ratio based on the current theme.
++ * High-contrast themes use 7 (WCAG AAA), normal themes use 4.5 (WCAG AA).
++ */
++function getMinimumContrastRatio(): number {
++  return isHighContrastTheme() ? 7 : 4.5;
++}
++
+ /**
+  * Apply the current theme to all terminal instances.
+  */
+ function applyThemeToAll(): void {
+   const theme = getXtermTheme(terminalLocation);
++  const contrastRatio = getMinimumContrastRatio();
+   for (const instance of terminals.values()) {
+     instance.terminal.options.theme = theme;
++    instance.terminal.options.minimumContrastRatio = contrastRatio;
+   }
+ }
+ 
+@@ -704,16 +726,17 @@ function createTerminal(id: string, name: string, config: TerminalConfig, isActi
+   // for the scrollbar. FitAddon calculates: scrollbarWidth = scrollback === 0 ? 0 : (overviewRuler?.width || 14).
+   // Setting width=0 doesn't work because 0 is falsy (0||14=14). Width=1 is truthy and
+   // makes the Viewport's scrollbar element only 1px wide — effectively invisible.
++  const resolvedFontFamily = config.fontFamily || getFontFamily();
+   const terminal = new Terminal({
+     scrollback: config.scrollback || 10000,
+     cursorBlink: config.cursorBlink ?? true,
+     cursorStyle: "block",
+     fontSize: config.fontSize || 14,
+-    fontFamily: getFontFamily(),
++    fontFamily: resolvedFontFamily,
+     macOptionIsMeta: false,
+     macOptionClickForcesSelection: true,
+     drawBoldTextInBrightColors: true,
+-    minimumContrastRatio: 4.5,
++    minimumContrastRatio: getMinimumContrastRatio(),
+     rightClickSelectsWord: false,
+     fastScrollSensitivity: 5,
+     tabStopWidth: 8,
+@@ -998,6 +1021,11 @@ function applyConfig(config: Partial<TerminalConfig>): void {
+   if (config.scrollback !== undefined) {
+     currentConfig.scrollback = config.scrollback;
+   }
++  if (config.fontFamily !== undefined) {
++    currentConfig.fontFamily = config.fontFamily;
++  }
++
++  let needsRefit = false;
+ 
+   for (const instance of terminals.values()) {
+     const term = instance.terminal;
+@@ -1005,6 +1033,7 @@ function applyConfig(config: Partial<TerminalConfig>): void {
+     if (config.fontSize !== undefined) {
+       // fontSize 0 means "inherit from editor" — use fallback
+       term.options.fontSize = config.fontSize || 14;
++      needsRefit = true;
+     }
+     if (config.cursorBlink !== undefined) {
+       term.options.cursorBlink = config.cursorBlink;
+@@ -1012,9 +1041,14 @@ function applyConfig(config: Partial<TerminalConfig>): void {
+     if (config.scrollback !== undefined) {
+       term.options.scrollback = config.scrollback;
+     }
++    if (config.fontFamily !== undefined) {
++      // Empty fontFamily falls back to CSS variable → 'monospace'
++      term.options.fontFamily = config.fontFamily || getFontFamily();
++      needsRefit = true;
++    }
+ 
+-    // Refit after font size changes (affects cell dimensions)
+-    if (config.fontSize !== undefined) {
++    // Refit after font changes (affects cell dimensions)
++    if (needsRefit) {
+       instance.fitAddon.fit();
+     }
+   }

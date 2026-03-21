@@ -16,8 +16,26 @@ export interface MessageSender {
 
 // ─── Constants ──────────────────────────────────────────────────────
 
-/** Flush interval in milliseconds. Compromise between VS Code (5ms) and reference (16ms). */
-const FLUSH_INTERVAL_MS = 8;
+/** Minimum adaptive flush interval (high-frequency, low-throughput). */
+const MIN_FLUSH_INTERVAL_MS = 4;
+
+/** Maximum adaptive flush interval (batching, high-throughput). */
+const MAX_FLUSH_INTERVAL_MS = 16;
+
+/** Default flush interval in milliseconds. Compromise between VS Code (5ms) and reference (16ms). */
+const DEFAULT_FLUSH_INTERVAL_MS = 8;
+
+/** Number of recent flush sizes to track for throughput estimation. */
+const THROUGHPUT_WINDOW_SIZE = 5;
+
+/** Average flush size (chars) above which interval increases to MAX. */
+const HIGH_THROUGHPUT_THRESHOLD = 32_768;
+
+/** Average flush size (chars) below which interval decreases to MIN. */
+const LOW_THROUGHPUT_THRESHOLD = 1_024;
+
+/** Hard cap on total buffered characters (1MB). FIFO eviction when exceeded. */
+const MAX_TOTAL_BUFFER_CHARS = 1_048_576;
 
 /** Maximum buffer size in characters (string .length). Triggers immediate flush. */
 const MAX_BUFFER_SIZE = 65_536;
@@ -60,9 +78,19 @@ export class OutputBuffer {
   /** Whether this buffer has been disposed. */
   private _disposed = false;
 
+  /** Rolling window of recent flush sizes for throughput estimation. */
+  private _throughputWindow: number[] = [];
+  /** Current adaptive flush interval (ms). */
+  private _currentInterval: number = DEFAULT_FLUSH_INTERVAL_MS;
+
   /** Accessor for testing: current unacked char count. */
   get unackedCharCount(): number {
     return this._unackedCharCount;
+  }
+
+  /** Accessor: current total buffered character count. */
+  get bufferSize(): number {
+    return this._bufferSize;
   }
 
   /** Accessor for testing: whether PTY is paused. */
@@ -90,11 +118,41 @@ export class OutputBuffer {
       return;
     }
 
-    this._chunks.push(data);
-    this._bufferSize += data.length;
+    // Buffer overflow protection
+    let chunk = data;
+    if (chunk.length > MAX_TOTAL_BUFFER_CHARS) {
+      // Single oversized chunk: truncate to cap (keep tail), clear buffer
+      chunk = chunk.slice(chunk.length - MAX_TOTAL_BUFFER_CHARS);
+      this._chunks = [];
+      this._bufferSize = 0;
+    } else if (this._bufferSize + chunk.length > MAX_TOTAL_BUFFER_CHARS) {
+      // Evict oldest chunks (FIFO) until new data fits
+      let excess = this._bufferSize + chunk.length - MAX_TOTAL_BUFFER_CHARS;
+      while (excess > 0 && this._chunks.length > 0) {
+        const oldest = this._chunks[0];
+        if (oldest.length <= excess) {
+          // Drop entire chunk
+          this._chunks.shift();
+          this._bufferSize -= oldest.length;
+          excess -= oldest.length;
+        } else {
+          // Slice the oldest chunk to remove only the excess portion
+          this._chunks[0] = oldest.slice(excess);
+          this._bufferSize -= excess;
+          excess = 0;
+        }
+      }
+    }
+
+    this._chunks.push(chunk);
+    this._bufferSize += chunk.length;
 
     // When output is paused, accumulate data but don't start flush timer
     if (this._isOutputPaused) {
+      // Coalesce chunks to prevent unbounded array growth while paused
+      if (this._chunks.length >= MAX_CHUNKS) {
+        this._chunks = [this._chunks.join("")];
+      }
       return;
     }
 
@@ -103,7 +161,7 @@ export class OutputBuffer {
       this._flushTimer = setTimeout(() => {
         this._flushTimer = undefined;
         this._flush();
-      }, FLUSH_INTERVAL_MS);
+      }, this._currentInterval);
     }
 
     // Immediate flush if buffer exceeds size or chunk limits
@@ -209,6 +267,8 @@ export class OutputBuffer {
     this._bufferSize = 0;
     this._unackedCharCount = 0;
     this._isPaused = false;
+    this._throughputWindow = [];
+    this._currentInterval = DEFAULT_FLUSH_INTERVAL_MS;
   }
 
   // ─── Private ────────────────────────────────────────────────────
@@ -230,6 +290,22 @@ export class OutputBuffer {
     const data = this._chunks.join("");
     this._chunks = [];
     this._bufferSize = 0;
+
+    // Record flush size for adaptive interval
+    this._throughputWindow.push(data.length);
+    if (this._throughputWindow.length > THROUGHPUT_WINDOW_SIZE) {
+      this._throughputWindow.shift();
+    }
+    if (this._throughputWindow.length === THROUGHPUT_WINDOW_SIZE) {
+      const avg = this._throughputWindow.reduce((sum, v) => sum + v, 0) / THROUGHPUT_WINDOW_SIZE;
+      if (avg > HIGH_THROUGHPUT_THRESHOLD) {
+        this._currentInterval = MAX_FLUSH_INTERVAL_MS;
+      } else if (avg < LOW_THROUGHPUT_THRESHOLD) {
+        this._currentInterval = MIN_FLUSH_INTERVAL_MS;
+      } else {
+        this._currentInterval = DEFAULT_FLUSH_INTERVAL_MS;
+      }
+    }
 
     // Track unacked chars for flow control
     this._unackedCharCount += data.length;

@@ -554,3 +554,241 @@ describe("OutputBuffer pause/resume output", () => {
     buffer.dispose();
   });
 });
+
+// ─── Adaptive Flush Interval ───────────────────────────────────────
+
+describe("OutputBuffer adaptive flush interval", () => {
+  it("cold start uses default 8ms interval", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("adaptive-1", sender, pty);
+
+    buffer.append("hello");
+
+    // At 7ms, should not have flushed yet
+    vi.advanceTimersByTime(7);
+    expect(sender.messages).toHaveLength(0);
+
+    // At 8ms, should flush
+    vi.advanceTimersByTime(1);
+    expect(sender.messages).toHaveLength(1);
+
+    buffer.dispose();
+  });
+
+  it("high throughput increases interval to 16ms", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("adaptive-2", sender, pty);
+
+    // Fill throughput window with 5 flushes of >32KB each
+    const bigChunk = "x".repeat(40_000);
+    for (let i = 0; i < 5; i++) {
+      buffer.append(bigChunk);
+      vi.advanceTimersByTime(8); // flush with default interval
+    }
+    expect(sender.messages).toHaveLength(5);
+
+    // Now the interval should be 16ms. Append new data.
+    buffer.append("after-high");
+
+    // At 15ms, should not have flushed
+    vi.advanceTimersByTime(15);
+    expect(sender.messages).toHaveLength(5);
+
+    // At 16ms, should flush
+    vi.advanceTimersByTime(1);
+    expect(sender.messages).toHaveLength(6);
+
+    buffer.dispose();
+  });
+
+  it("low throughput decreases interval to 4ms", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("adaptive-3", sender, pty);
+
+    // Fill throughput window with 5 flushes of <1KB each
+    const smallChunk = "x".repeat(500);
+    for (let i = 0; i < 5; i++) {
+      buffer.append(smallChunk);
+      vi.advanceTimersByTime(8); // flush with default interval
+    }
+    expect(sender.messages).toHaveLength(5);
+
+    // Now the interval should be 4ms. Append new data.
+    buffer.append("after-low");
+
+    // At 3ms, should not have flushed
+    vi.advanceTimersByTime(3);
+    expect(sender.messages).toHaveLength(5);
+
+    // At 4ms, should flush
+    vi.advanceTimersByTime(1);
+    expect(sender.messages).toHaveLength(6);
+
+    buffer.dispose();
+  });
+
+  it("medium throughput uses default 8ms", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("adaptive-4", sender, pty);
+
+    // Fill throughput window with 5 flushes of ~10KB each
+    const medChunk = "x".repeat(10_000);
+    for (let i = 0; i < 5; i++) {
+      buffer.append(medChunk);
+      vi.advanceTimersByTime(8);
+    }
+    expect(sender.messages).toHaveLength(5);
+
+    // Interval should remain 8ms
+    buffer.append("after-med");
+
+    vi.advanceTimersByTime(7);
+    expect(sender.messages).toHaveLength(5);
+
+    vi.advanceTimersByTime(1);
+    expect(sender.messages).toHaveLength(6);
+
+    buffer.dispose();
+  });
+
+  it("existing flush triggers still work with adaptive interval", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("adaptive-5", sender, pty);
+
+    // 64KB immediate flush trigger still works
+    const chunk64k = "x".repeat(65_536);
+    buffer.append(chunk64k);
+    expect(sender.messages).toHaveLength(1);
+
+    // 100 chunk trigger still works
+    for (let i = 0; i < 100; i++) {
+      buffer.append("y");
+    }
+    expect(sender.messages).toHaveLength(2);
+
+    buffer.dispose();
+  });
+});
+
+// ─── Buffer Overflow Protection ────────────────────────────────────
+
+describe("OutputBuffer buffer overflow protection", () => {
+  it("evicts oldest chunks when cap exceeded", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("overflow-1", sender, pty);
+
+    // Pause output so data accumulates in the buffer without flushing
+    buffer.pauseOutput();
+
+    // Fill buffer to 900KB
+    const chunk900k = "A".repeat(900_000);
+    buffer.append(chunk900k);
+
+    // Append 200KB → total 1.1MB > 1MB cap, oldest should be evicted
+    const chunk200k = "B".repeat(200_000);
+    buffer.append(chunk200k);
+
+    // Resume and flush to see what's in the buffer
+    buffer.resumeOutput();
+
+    // The flushed data should be at most 1MB
+    // We expect some of the "A" data was evicted to make room for "B" data
+    const flushedData = (sender.messages[0] as { data: string }).data;
+    expect(flushedData.length).toBeLessThanOrEqual(1_048_576);
+    expect(flushedData.endsWith("B".repeat(200_000))).toBe(true);
+
+    buffer.dispose();
+  });
+
+  it("single oversized chunk is truncated to 1MB", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("overflow-2", sender, pty);
+
+    // Append 2MB chunk
+    const chunk2m = "X".repeat(2_097_152);
+    buffer.append(chunk2m);
+
+    // Force flush
+    buffer.flush();
+
+    const flushedData = (sender.messages[0] as { data: string }).data;
+    expect(flushedData.length).toBe(1_048_576);
+    // Tail should be preserved — last chars should be "X"
+    expect(flushedData).toBe("X".repeat(1_048_576));
+
+    buffer.dispose();
+  });
+
+  it("normal operation unaffected", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("overflow-3", sender, pty);
+
+    // Append small chunks — should not trigger any eviction
+    buffer.append("hello");
+    buffer.append(" world");
+
+    buffer.flush();
+
+    expect(sender.messages).toHaveLength(1);
+    expect((sender.messages[0] as { data: string }).data).toBe("hello world");
+
+    buffer.dispose();
+  });
+});
+
+// ─── bufferSize Accessor ───────────────────────────────────────────
+
+describe("OutputBuffer bufferSize accessor", () => {
+  it("returns current buffer size", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("bs-1", sender, pty);
+
+    buffer.append("hello"); // 5 chars
+    expect(buffer.bufferSize).toBe(5);
+
+    buffer.dispose();
+  });
+
+  it("resets to 0 after flush", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("bs-2", sender, pty);
+
+    buffer.append("hello");
+    expect(buffer.bufferSize).toBe(5);
+
+    buffer.flush();
+    expect(buffer.bufferSize).toBe(0);
+
+    buffer.dispose();
+  });
+
+  it("reflects size after multiple appends", () => {
+    const sender = createMockSender();
+    const pty = createMockPty();
+    const buffer = new OutputBuffer("bs-3", sender, pty);
+
+    // Pause output so data accumulates without timer-based flushing
+    buffer.pauseOutput();
+
+    buffer.append("aaa"); // 3 chars
+    expect(buffer.bufferSize).toBe(3);
+
+    buffer.append("bbbbb"); // 5 chars
+    expect(buffer.bufferSize).toBe(8);
+
+    buffer.append("cc"); // 2 chars
+    expect(buffer.bufferSize).toBe(10);
+
+    buffer.dispose();
+  });
+});

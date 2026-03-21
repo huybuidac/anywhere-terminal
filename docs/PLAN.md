@@ -1,541 +1,432 @@
-# AnyWhere Terminal - Implementation Plan
+# AnyWhere Terminal - Refactoring Plan v2
 
-## Overview
+## Context
 
-This plan is organized into 4 phases, progressing from a minimal working terminal to a fully polished, publishable extension. Each phase has clear goals, detailed tasks, estimated effort, and acceptance criteria.
+Phases 1-3 and 5 from the original plan (`docs/PLAN.v1.md`) are complete. The extension works: sidebar, panel, editor terminals with multi-tab, split panes, theme integration, keyboard shortcuts, context menus, and flow control.
 
-**Total estimated effort**: ~6-8 weeks for a single developer
+However, the codebase has accumulated significant technical debt:
+
+- `src/webview/main.ts` is 1473 LOC with 18 distinct responsibilities
+- Design docs have drifted from implementation (36 mismatches, 38 undocumented features)
+- 3 correctness bugs identified
+- Dead code exists across multiple files
+- Zero testability in the webview layer
+
+Full audit results: `docs/refactor/webview-implementation-vs-design.md`
+VS Code patterns analysis: `docs/refactor/vscode-terminal-patterns.md`
+Target architecture: `docs/refactor/webview-refactor-plan.md`
 
 ---
 
-## Phase 1 - MVP: Single Terminal in Sidebar (Week 1-2)
+## Phase 6 — Fix Correctness Bugs
 
 ### Goal
-Create a **single, fully functional terminal** in the Primary Sidebar using xterm.js + node-pty. This is the most critical milestone - proving the core architecture works end-to-end.
 
-### Tasks
+Fix 3 bugs identified during the audit that affect runtime correctness.
 
-#### 1.1 Project Scaffolding (~2h)
-- [x] Extension already scaffolded with `yo code` (TypeScript + esbuild)
-- [x] Add runtime dependencies: `@xterm/xterm`, `@xterm/addon-fit`, `@xterm/addon-web-links`
-- [x] Configure esbuild to:
-  - Bundle extension host code (Node.js target)
-  - Bundle webview code separately (browser target)
-  - Externalize `vscode` and `node-pty`
-- [x] Set up `media/` directory for webview assets
-- [x] Configure `.vscodeignore` for clean packaging
+### 6.1 Fix ack routing — make it session-scoped
 
-#### 1.2 Define View Container & View (~1h)
-- [x] Add `viewsContainers.activitybar` entry in `package.json`:
-  - id: `anywhereTerminal`
-  - title: "AnyWhere Terminal"
-  - icon: terminal icon (SVG or product icon `$(terminal)`)
-- [x] Add `views.anywhereTerminal` entry:
-  - id: `anywhereTerminal.sidebar`
-  - name: "Terminal"
-  - type: `webview`
-- [x] Register activation event: `onView:anywhereTerminal.sidebar`
+**Problem**: Webview sends `{ type: "ack", charCount }` with no `tabId`. Provider routes all acks to the active session only (`TerminalViewProvider.ts:142-149`). If a background tab produces heavy output, its acks credit the wrong session's OutputBuffer, potentially permanently pausing the background tab's PTY.
 
-#### 1.3 Implement WebviewViewProvider (~4h)
-- [x] Create `src/providers/TerminalViewProvider.ts`
-  - Implements `vscode.WebviewViewProvider`
-  - `resolveWebviewView()`:
-    - Set `enableScripts: true`
-    - Set `retainContextWhenHidden: true`
-    - Set `localResourceRoots` to extension's media directory
-    - Generate and set HTML content
-- [x] Create `getHtmlForWebview()` function:
-  - CSP with nonce-based script security
-  - Load xterm.css
-  - Load bundled webview.js
-  - Include `<div id="terminal-container">` mount point
-- [x] Register provider in `extension.ts`:
-  ```typescript
-  vscode.window.registerWebviewViewProvider(
-    'anywhereTerminal.sidebar',
-    provider,
-    { webviewOptions: { retainContextWhenHidden: true } }
+**Fix**:
+- [x] Add `tabId: string` field to `AckMessage` in `src/types/messages.ts:89-93`
+- [x] Update `ackChars()` in `src/webview/main.ts:640-646` to track per-tab char counts and send `tabId` with each ack
+- [x] Update `TerminalViewProvider.ts:142-149` to route ack by `message.tabId` instead of finding the active tab
+- [x] Update `TerminalEditorProvider.ts` ack handler similarly
+
+**Reference**: `docs/refactor/webview-implementation-vs-design.md` — "Fix correctness bugs" section
+
+### 6.2 Fix shared resizeTimeout
+
+**Problem**: `debouncedFit()` (`main.ts:709`) and `debouncedFitAllLeaves()` (`main.ts:400`) share a single `resizeTimeout` variable (`main.ts:95`). They clobber each other's debounce timers — a split-pane resize during a window resize cancels one operation.
+
+**Fix**:
+- [x] Split `resizeTimeout` into two separate timers: `fitResizeTimeout` and `splitFitTimeout`
+- [x] `debouncedFit()` uses `fitResizeTimeout`
+- [x] `debouncedFitAllLeaves()` uses `splitFitTimeout`
+
+### 6.3 Add null guard on `_renderService.clear()`
+
+**Problem**: `main.ts:699` calls `core._renderService.clear()` without optional chaining, while `main.ts:666` uses `core?._renderService?.dimensions` with guards. If `_core` or `_renderService` is unavailable, line 699 throws.
+
+**Fix**:
+- [x] Change `core._renderService.clear()` to `core?._renderService?.clear()`
+
+---
+
+## Phase 7 — Remove Dead Code
+
+### Goal
+
+Clean up unused code identified during the audit.
+
+### 7.1 Remove dead `fitAddon` property from TerminalInstance
+
+**Problem**: `FitAddon` is instantiated and loaded (`main.ts:859-861`), stored on every instance (`main.ts:896`), but `instance.fitAddon` is never read. The custom `fitTerminal()` bypasses it entirely using xterm `_core` internals.
+
+**Fix**:
+- [x] Remove `fitAddon` from `TerminalInstance` interface (`main.ts:41`)
+- [x] Remove `webLinksAddon` from `TerminalInstance` interface (`main.ts:42`) — addon is loaded but stored property is never read
+- [x] Remove the property assignments in `createTerminal()` (`main.ts:896-897`)
+- [x] Keep the addon loading (`terminal.loadAddon(fitAddon)`) since the addons are still active — just stop storing references that are never used
+
+### 7.2 Remove dead `handlePaste()` from InputHandler
+
+**Problem**: `handlePaste()` in `InputHandler.ts:45-58` is exported but never called anywhere. The `case "v"` handler returns `false` to let xterm handle paste natively.
+
+**Fix**:
+- [x] Remove `handlePaste()` function from `src/webview/InputHandler.ts:37-58`
+- [x] Remove `paste` from `TerminalLike` interface (`InputHandler.ts:21`) if no other consumer uses it
+
+### 7.3 Remove dead error classes
+
+**Problem**: 4 error classes in `src/types/errors.ts` are defined but never thrown: `SpawnError`, `CwdNotFoundError`, `WebViewDisposedError`, `SessionNotFoundError`.
+
+**Fix**:
+- [x] Remove unused error classes from `src/types/errors.ts`
+- [x] Keep `PtyLoadError` and `ShellNotFoundError` which are actively used
+
+---
+
+## Phase 8 — Extract Modules from `main.ts`
+
+### Goal
+
+Break `src/webview/main.ts` (1473 LOC) into focused modules. Target: `main.ts` < 300 LOC as a thin composition root.
+
+**Reference**: `docs/refactor/webview-refactor-plan.md` for full target architecture and `docs/refactor/vscode-terminal-patterns.md` for applicable VS Code patterns.
+
+### Design Patterns Applied
+
+| Module            | Pattern                      | VS Code Inspiration                                    |
+| ----------------- | ---------------------------- | ------------------------------------------------------- |
+| ThemeManager      | Observer + Service           | `XtermTerminal._updateTheme()` separate from config     |
+| BannerService     | Presenter (stateless UI)     | Notification rendering decoupled from logic             |
+| XtermFitService   | Facade + Strategy            | `getXtermScaledDimensions()` in `xtermTerminal.ts`      |
+| ResizeCoordinator | Coordinator + Policy object  | `TerminalResizeDebouncer` as dedicated policy            |
+| WebviewStateStore | Store (named mutations)      | `TerminalService` owns state, UI reads from service      |
+| MessageRouter     | Message Router + Command     | `ICommandHandler` registry for dispatch                  |
+| main.ts           | Composition Root / App Shell | `TerminalViewPane` composes services, owns no logic      |
+
+### Patterns to avoid
+
+- **Deep inheritance** — use composition, not class hierarchies
+- **Generic event bus** — use typed callbacks or direct method calls
+- **Full DI container** — overkill for a webview; constructor injection is enough
+- **Premature class extraction** — pure helper functions (e.g., `getFontFamily()`) stay as functions
+
+### 8.1 Extract ThemeManager (~130 LOC)
+
+**Target**: `src/webview/theme/ThemeManager.ts`
+**Pattern**: Observer + Service
+
+The ThemeManager is an **Observer** — it watches `document.body` class changes via `MutationObserver` and reacts by rebuilding the theme. It is also a **Service** that owns theme state and exposes it to consumers. VS Code's `XtermTerminal` separates `_updateTheme()` from `updateConfig()` — we follow the same principle: theme is a standalone concern, not tangled with config or resize.
+
+**Extract from `main.ts`**:
+- [x] `getXtermTheme()` (lines 442-490)
+- [x] `isHighContrastTheme()` (lines 496-501)
+- [x] `getMinimumContrastRatio()` (lines 507-509)
+- [x] `applyThemeToAll()` (lines 514-521)
+- [x] `startThemeWatcher()` (lines 527-546)
+- [x] `applyBodyBackground()` (lines 417-424)
+- [x] `updateLocation()` (lines 427-434)
+- [x] Related constants: `LOCATION_BACKGROUND_MAP` (lines 60-64)
+- [x] Related state: `terminalLocation`, `themeObserver`
+
+**Class shape**:
+```typescript
+class ThemeManager {
+  private location: TerminalLocation;
+  private observer: MutationObserver | undefined;
+
+  constructor(initialLocation: TerminalLocation);
+  getTheme(): Record<string, string | undefined>;
+  getMinimumContrastRatio(): number;
+  applyToAll(terminals: Iterable<TerminalInstance>): void;
+  applyBodyBackground(): void;
+  updateLocation(location: TerminalLocation): void;
+  startWatching(onThemeChange: () => void): void;
+  dispose(): void;
+}
+```
+
+**Why this pattern**: Theme reads from DOM (CSS variables), reacts to DOM mutations, and pushes updates to all terminals. The Observer pattern makes the data flow explicit: mutation -> rebuild -> apply. The Service encapsulates all theme state so `main.ts` doesn't own `terminalLocation` or `themeObserver` directly.
+
+### 8.2 Extract BannerService (~43 LOC)
+
+**Target**: `src/webview/ui/BannerService.ts`
+**Pattern**: Presenter (thin UI service)
+
+A pure UI presenter — takes data, creates DOM, manages dismiss lifecycle. No business logic, no state beyond the banners it creates. This is the simplest extraction and the lowest risk.
+
+**Extract from `main.ts`**:
+- [x] `showErrorBanner()` (lines 558-590)
+- [x] `INFO_BANNER_DISMISS_MS` constant (line 551)
+
+**Function shape**:
+```typescript
+function showBanner(container: HTMLElement, message: string, severity: "error" | "warn" | "info"): void;
+```
+
+**Why this pattern**: This is stateless DOM manipulation. No class needed — a single exported function with its constant is sufficient. VS Code similarly keeps notification rendering separate from notification logic.
+
+### 8.3 Extract XtermFitService (~100 LOC)
+
+**Target**: `src/webview/resize/XtermFitService.ts`
+**Pattern**: Facade + Strategy (Adapter over xterm internals)
+
+This module is a **Facade** — it hides the ugly reality of xterm's private `_core._renderService` API behind a clean `fitTerminal(instance)` interface. It is also a **Strategy** — the fit algorithm could be swapped (e.g., revert to `FitAddon.fit()`) without any other module knowing. VS Code uses the same principle: `getXtermScaledDimensions()` in `xtermTerminal.ts` centralizes all private xterm math.
+
+**Extract from `main.ts`**:
+- [x] `fitTerminal()` (lines 660-701) — the only place that touches xterm `_core._renderService`
+
+**Function shape**:
+```typescript
+function fitTerminal(terminal: Terminal, parentElement: HTMLElement): { cols: number; rows: number } | null;
+```
+
+**Rule**: This is the **only module** allowed to use xterm private APIs (`_core`, `_renderService`, `as any` casts). If xterm updates break internals, only this file needs fixing.
+
+**Why this pattern**: Isolating unstable dependencies behind a stable interface is textbook Facade. The custom `fitTerminal()` already acts as a replacement Strategy for `FitAddon.fit()` — making that boundary explicit improves maintainability.
+
+### 8.4 Extract ResizeCoordinator (~100 LOC)
+
+**Target**: `src/webview/resize/ResizeCoordinator.ts`
+**Pattern**: Coordinator + Policy object
+
+The ResizeCoordinator is a **Coordinator** — it orchestrates the interaction between ResizeObserver events, debounce timers, visibility state, location inference, and the XtermFitService. It owns the resize **policy** (when to fit, when to defer, when to skip). VS Code's `TerminalResizeDebouncer` is the direct inspiration — a dedicated policy object that decides immediate vs deferred resize, separate from the terminal instance itself.
+
+**Extract from `main.ts`**:
+- [x] `debouncedFit()` (lines 708-715)
+- [x] `fitAllTerminals()` (lines 721-742)
+- [x] `debouncedFitAllLeaves()` (lines 399-414)
+- [x] `setupResizeObserver()` (lines 748-770)
+- [x] `onViewShow()` (lines 776-800)
+- [x] `inferLocationFromSize()` (lines 119-121)
+- [x] Related state: `pendingResize`, `fitResizeTimeout`, `splitFitTimeout`, `resizeObserver`
+
+**Class shape**:
+```typescript
+class ResizeCoordinator {
+  private pendingResize: boolean;
+  private fitTimeout: number | undefined;
+  private splitFitTimeout: number | undefined;
+  private observer: ResizeObserver | undefined;
+
+  constructor(
+    private fitService: XtermFitService,
+    private themeManager: ThemeManager,
+    private getState: () => { activeTabId, terminals, tabLayouts },
   );
-  ```
+  setup(container: HTMLElement): void;
+  debouncedFit(): void;
+  debouncedFitAllLeaves(tabId: string): void;
+  onViewShow(): void;
+  dispose(): void;
+}
+```
 
-#### 1.4 Implement node-pty Integration (~3h)
-- [x] Create `src/pty/ptyManager.ts`:
-  - Dynamic require to load VS Code's built-in node-pty:
-    ```typescript
-    const modulePath = path.join(vscode.env.appRoot, 'node_modules.asar', 'node-pty');
-    ```
-  - Handle webpack/esbuild require: `__non_webpack_require__` pattern
-- [x] Create `src/pty/ptySession.ts`:
-  - `PtySession` class wrapping a single PTY process
-  - `spawn(shell, args, options)` - create PTY with cols/rows/cwd/env
-  - `write(data)` - forward input to PTY
-  - `resize(cols, rows)` - resize PTY
-  - `kill()` - terminate PTY process
-  - Events: `onData`, `onExit`
-- [x] Shell detection for macOS:
-  - Use `process.env.SHELL` (defaults to `/bin/zsh` on macOS Catalina+)
-  - Fallback chain: `$SHELL` → `/bin/zsh` → `/bin/bash`
+**Dependencies**: `XtermFitService` (for actual fit), `ThemeManager` (for location updates), state accessors (terminals, tabLayouts, activeTabId).
 
-#### 1.5 Implement Webview Terminal (xterm.js) (~4h)
-- [x] Create `src/webview/main.ts` (bundled separately for browser):
-  - Initialize xterm.js `Terminal` instance
-  - Load `FitAddon` and `WebLinksAddon` (always loaded — trivial, high UX value)
-  - Open terminal in `#terminal-container`
-  - Wire up `acquireVsCodeApi()` for messaging
-- [x] Input handling:
-  - `terminal.onData(data)` → `vscode.postMessage({ type: 'input', data })`
-- [x] Output handling:
-  - `window.addEventListener('message', ...)` → on `type: 'output'` → `terminal.write(data)`
-- [x] Resize handling:
-  - `ResizeObserver` on container → `fitAddon.fit()` → send `{ type: 'resize', cols, rows }`
-  - Debounce resize events at ~100ms
+**Why this pattern**: Resize involves 4 concerns (observation, debouncing, visibility, fitting) that are currently scattered across 7 functions sharing global state. A Coordinator consolidates the policy decisions while delegating actual work to XtermFitService.
 
-#### 1.6 Implement IPC Messaging (~3h)
-- [x] Wire messaging directly in `TerminalViewProvider` (no separate MessageBridge abstraction — per design, messages route through the ViewProvider):
-  - Extension → WebView: `webviewView.webview.postMessage(msg)`
-  - WebView → Extension: `webviewView.webview.onDidReceiveMessage(handler)`
-- [x] Message protocol (Phase 1):
-  ```typescript
-  // WebView → Extension
-  { type: 'ready' }
-  { type: 'input', data: string }
-  { type: 'resize', cols: number, rows: number }
-  { type: 'ack', bytes: number }         // flow control acknowledgment
+### 8.5 Extract WebviewStateStore (~100 LOC)
 
-  // Extension → WebView
-  { type: 'output', data: string }
-  { type: 'exit', code: number }
-  ```
-- [x] Output buffering on extension side:
-  - Collect PTY output chunks into a buffer string
-  - Flush every ~8ms via `setInterval` (compromise between VS Code's 5ms and reference's 16ms)
-  - Immediate flush if buffer exceeds threshold (e.g., 64KB)
-- [x] Flow control (backpressure):
-  - Track unacknowledged bytes sent to webview
-  - When unacked exceeds high watermark (100K chars) → `ptyProcess.pause()`
-  - Webview sends `ack` message after writing each batch (5K batch size)
-  - When unacked drops below low watermark (5K chars) → `ptyProcess.resume()`
+**Target**: `src/webview/state/WebviewStateStore.ts`
+**Pattern**: Store (centralized state with named mutations)
 
-#### 1.6a Basic Theme Integration (~1h)
-- [x] Read VS Code CSS variables in webview on startup:
-  - `--vscode-terminal-background`, `--vscode-terminal-foreground`
-  - `--vscode-terminalCursor-foreground`, `--vscode-terminal-selectionBackground`
-  - All 16 ANSI color variables (`--vscode-terminal-ansiBlack` through `--vscode-terminal-ansiBrightWhite`)
-- [x] Apply as xterm.js `terminal.options.theme` on init
-- [x] Monitor theme changes via `MutationObserver` on `<body>` class changes → re-read and re-apply
+A **Store** that owns all mutable UI state and exposes mutations through named methods. This replaces the current 16 scattered module-level `let` variables and 4 Maps that are mutated from 7+ different functions across 1400+ lines. The Store pattern (inspired by Redux/Vuex but much simpler) makes state transitions explicit, debuggable, and testable. VS Code's `TerminalService` follows a similar principle — services own state, UI reads from services.
 
-#### 1.7 Basic Clipboard (macOS) (~2h)
-- [x] Implement `attachCustomKeyEventHandler` on xterm.js:
-  - Detect `Cmd+C`:
-    - If selection exists → `navigator.clipboard.writeText(term.getSelection())`, return `false`
-    - If no selection → return `true` (let xterm send SIGINT `\x03`)
-  - Detect `Cmd+V`:
-    - Read from clipboard → `term.paste(text)`, return `false`
-- [x] Ensure `Ctrl+C` always sends SIGINT (standard terminal behavior)
+**Extract from `main.ts`**:
+- [x] `persistLayoutState()` (lines 126-137)
+- [x] `restoreLayoutState()` (lines 140-173)
+- [x] State variables: `activeTabId`, `currentConfig`, `tabLayouts`, `tabActivePaneIds`, `resizeCleanups`
+- [x] `terminals` Map (or keep it in main and pass reference)
 
-#### 1.8 Manual Testing (~2h)
-- [x] Run with F5, open AnyWhere Terminal in Activity Bar
-- [x] Verify:
-  - [x] Shell prompt appears (zsh/bash)
-  - [x] Commands execute: `ls`, `pwd`, `git status`, `node -v`
-  - [x] Output renders correctly (colors, formatting)
-  - [x] Resize works when dragging sidebar width
-  - [x] Cmd+C copies selected text
-  - [x] Cmd+V pastes from clipboard
-  - [x] Ctrl+C interrupts running process
-  - [x] Terminal survives sidebar collapse/expand (if `retainContextWhenHidden`)
-  - [x] Terminal theme matches current VS Code theme (dark/light)
-  - [x] URLs in output are clickable
-  - [x] Heavy output (`find / -name "*.js" 2>/dev/null`) does not crash (flow control)
+**Class shape**:
+```typescript
+class WebviewStateStore {
+  readonly terminals: Map<string, TerminalInstance>;
+  readonly tabLayouts: Map<string, SplitNode>;
+  readonly tabActivePaneIds: Map<string, string>;
+  readonly resizeCleanups: Map<string, (() => void)[]>;
 
-### Phase 1 Acceptance Criteria
-- [x] Terminal appears in Primary Sidebar with working shell
-- [x] Commands execute and output displays correctly
-- [x] Copy/paste works
-- [x] Resize works
-- [x] Terminal colors match active VS Code theme
-- [x] URLs in terminal output are clickable
-- [x] Heavy output does not crash or freeze the extension (flow control active)
-- [x] No crashes or extension host hangs
+  activeTabId: string | null;
+  currentConfig: TerminalConfig;
+
+  constructor(private vscode: VsCodeApi);
+  setActiveTab(tabId: string | null): void;
+  setLayout(tabId: string, layout: SplitNode): void;
+  deleteLayout(tabId: string): void;
+  setActivePaneId(tabId: string, paneId: string): void;
+  getActivePaneId(tabId: string): string;
+  persist(): void;
+  restore(): Map<string, SplitNode>;
+}
+```
+
+**Why this pattern**: The biggest testability blocker in `main.ts` is scattered mutable state. A Store consolidates mutations, enables reset for testing, and makes it possible to trace which operation changed what state.
+
+### 8.6 Extract MessageRouter (~172 LOC)
+
+**Target**: `src/webview/messaging/MessageRouter.ts`
+**Pattern**: Message Router + Command Handler (dispatch table)
+
+A **Message Router** with a typed dispatch table — one handler per message type. This replaces the current 172-line `switch` statement where some cases contain 30+ lines of inline business logic (e.g., `splitPaneCreated` at lines 1271-1309). Each handler becomes a named function that receives the message and a context object. VS Code's extension host uses a similar `ICommandHandler` registry pattern for command dispatch.
+
+**Extract from `main.ts`**:
+- [x] `handleMessage()` switch statement (lines 1198-1363)
+- [x] Each case becomes a named handler function
+
+**Shape**:
+```typescript
+interface MessageHandlers {
+  onOutput(msg: OutputMessage): void;
+  onExit(msg: ExitMessage): void;
+  onTabCreated(msg: TabCreatedMessage): void;
+  onTabRemoved(msg: TabRemovedMessage): void;
+  onRestore(msg: RestoreMessage): void;
+  onConfigUpdate(msg: ConfigUpdateMessage): void;
+  onViewShow(): void;
+  onSplitPane(msg: SplitPaneMessage): void;
+  onSplitPaneCreated(msg: SplitPaneCreatedMessage): void;
+  onCloseSplitPane(): void;
+  onCloseSplitPaneById(msg: CloseSplitPaneByIdMessage): void;
+  onSplitPaneAt(msg: SplitPaneAtMessage): void;
+  onCtxClear(msg: CtxClearMessage): void;
+  onError(msg: ErrorMessage): void;
+}
+
+function createMessageRouter(handlers: MessageHandlers): (msg: ExtensionToWebViewMessage) => void;
+```
+
+**Why this pattern**: The Router makes protocol drift visible during code review — adding a message type requires adding a handler. Inline logic is replaced by named functions that can be tested independently. The `init` message is handled separately in `main.ts` since it orchestrates bootstrap.
+
+### 8.7 Reduce `main.ts` to Composition Root
+
+**Pattern**: Facade / App Shell (Composition Root)
+
+After all extractions, `main.ts` becomes a thin **Composition Root** (also called App Shell) — it creates all services, wires their dependencies, sets up DOM event listeners, and delegates everything else. VS Code's `TerminalViewPane` follows the same principle: it composes `TerminalService`, `TerminalTabbedView`, etc., but doesn't implement terminal logic itself.
+
+After all extractions, `main.ts` should only contain:
+- [x] `bootstrap()` — create ThemeManager, ResizeCoordinator, StateStore, MessageRouter; wire DOM events; send `ready`
+- [x] `handleInit()` — create terminals from init message, set up resize observer
+- [x] `createTerminal()` — moved to `TerminalFactory` class in `src/webview/terminal/TerminalFactory.ts`
+- [x] `switchTab()`, `removeTerminal()` — orchestration that calls multiple services
+- [x] `updateTabBar()` — delegates to `buildTabBarData()` in TabBarUtils
+
+**Target**: < 300 LOC (achieved: 293 LOC)
+
+**Why this pattern**: A Composition Root is the natural end-state of extracting concerns into services. It answers "where do I wire things together?" without becoming a God Object. The key rule: the root creates and connects components but contains no business logic itself.
 
 ---
 
-## Phase 2 - Multi-Location & Multi-Tab (Week 3-4)
+## Phase 9 — Update Design Docs
 
 ### Goal
-Terminal works in **all locations** (Sidebar, Panel, Editor) with **multiple tab** support per view.
 
-### Tasks
+Bring all 9 design docs in sync with actual code. Currently 36 mismatches and 38 undocumented features.
 
-#### 2.1 Panel Terminal View (~2h)
-- [x] Add `viewsContainers.panel` entry in `package.json`:
-  - id: `anywhereTerminalPanel`
-  - title: "AnyWhere Terminal"
-- [x] Add `views.anywhereTerminalPanel` entry:
-  - id: `anywhereTerminal.panel`
-  - type: `webview`
-- [x] Reuse `TerminalViewProvider` for panel view
-- [x] Each view instance gets its own PTY session
+**Reference**: `docs/refactor/webview-implementation-vs-design.md` — per-doc mismatch lists
 
-#### 2.2 Editor Terminal (WebviewPanel) (~4h)
-- [x] Create `src/providers/TerminalEditorProvider.ts`:
-  - Use `vscode.window.createWebviewPanel()` to create editor-area terminal
-  - Share the same webview HTML generation logic
-  - Share the same IPC bridge pattern
-- [x] Register command `anywhereTerminal.newTerminalInEditor`
-- [x] Handle editor tab lifecycle (close → kill PTY)
+### 9.1 Update message-protocol.md
+- [x] Add 9 undocumented message types (split pane + viewShow + ctxClear)
+- [x] Add `fontFamily` to `TerminalConfig`
+- [x] Update union type counts
+- [x] Add `tabId` to `AckMessage` (after Phase 6.1)
+- [x] Remove reference to non-existent `src/webview/utils/MessageHandler.ts`
 
-#### 2.3 Session Manager (~4h)
-- [x] Create `src/session/SessionManager.ts`:
-  - Central registry: `Map<string, TerminalSession>`
-  - `TerminalSession`: `{ id, pty, viewId, tabName, isActive, createdAt }`
-  - `createSession(viewId, options?)` → spawn PTY, return sessionId
-  - `destroySession(sessionId)` → kill PTY, clean up
-  - `getSessionsForView(viewId)` → list sessions attached to a view
-  - `switchActiveSession(viewId, sessionId)` → change data routing
-- [x] Generate unique session IDs: `crypto.randomUUID()`
-- [x] Terminal number recycling (1-10)
+### 9.2 Update xterm-integration.md
+- [x] Fix xterm version: v5 -> v6
+- [x] Remove lazy loading pattern (not implemented)
+- [x] Remove `allowProposedApi` claim
+- [x] Document WebGL as always-loaded (not on-demand)
+- [x] Remove addon cache pattern
+- [x] Document custom `fitTerminal()` replacing `FitAddon.fit()`
+- [x] Update file size estimate and structure
 
-#### 2.4 Multi-Tab UI in WebView (~6h)
-- [x] Create tab bar component in webview HTML/CSS:
-  - Horizontal tab strip at top of terminal area
-  - Each tab: name label + close (x) button
-  - Active tab highlighted
-  - "+" button to create new tab
-- [x] Tab switching logic:
-  - Only one xterm.js instance visible at a time per view
-  - Use CSS `display: none/block` to switch (preserve scrollback)
-  - OR: destroy/recreate xterm instances (simpler, loses local state)
-- [x] Tab message protocol:
-  ```typescript
-  // WebView → Extension
-  { type: 'createTab' }
-  { type: 'switchTab', tabId: string }
-  { type: 'closeTab', tabId: string }
-  
-  // Extension → WebView
-  { type: 'tabCreated', tabId: string, name: string }
-  { type: 'tabList', tabs: Array<{ id, name, isActive }> }
-  { type: 'tabRemoved', tabId: string }
-  ```
-- [x] Input routing: include `tabId` in input/resize messages
+### 9.3 Update resize-handling.md
+- [x] Replace FitAddon.fit() pipeline with custom fitTerminal() using getBoundingClientRect()
+- [x] Fix debounce placement description
+- [x] Document split-pane resize system
+- [x] Remove non-existent `ResizeHandler` class and file path
+- [x] Document `inferLocationFromSize()` behavior
 
-#### 2.5 Secondary Sidebar Support (~2h)
-- [x] Check if `contribSecondarySideBar` API is finalized in target VS Code version
-  - If yes: add `viewsContainers.secondarySidebar` entry
-  - If no: document "Move View" instructions for users
-- [x] Register command `anywhereTerminal.moveToSecondary`:
-  - Focus the sidebar view
-  - Execute `workbench.action.moveView`
+### 9.4 Update theme-integration.md
+- [x] Fix background resolution priority order
+- [x] Remove non-existent `ThemeManager` class (or update after Phase 8.1)
+- [x] Add 7 missing theme properties
+- [x] Document dynamic location inference
+- [x] Document `minimumContrastRatio` for high-contrast themes
+- [x] Fix default location parameter (`"panel"` -> `"sidebar"`)
 
-#### 2.6 Commands Registration (~2h)
-- [x] Register all commands in `package.json`:
-  - `anywhereTerminal.newTerminal` - create new tab in active view
-  - `anywhereTerminal.newTerminalInEditor` - open editor terminal
-  - `anywhereTerminal.killTerminal` - kill active tab
-  - `anywhereTerminal.clearTerminal` - clear active terminal
-  - `anywhereTerminal.focusSidebar` - focus sidebar terminal
-  - `anywhereTerminal.focusPanel` - focus panel terminal
-- [x] Add view/title menu buttons (icons in view toolbar):
-  - New terminal (+ icon)
-  - Kill terminal (trash icon)
+### 9.5 Update keyboard-input.md
+- [x] Replace paste section with actual behavior (native xterm paste)
+- [x] Remove `enableCmdK` setting reference
+- [x] Add Escape selection clear, Cmd+Backspace line kill
+- [x] Mark `handlePaste()` as removed (after Phase 7.2)
+- [x] Fix file path
 
-#### 2.7 View Lifecycle Resilience (~3h)
-- [x] PTY processes anchored to Extension Host lifecycle (not WebView)
-- [x] Implement scrollback cache in SessionManager:
-  - Buffer PTY output per session (configurable max size)
-  - On webview `ready` message → flush cached output to webview
-- [x] Handle WebView visibility changes:
-  - `onDidChangeVisibility` → pause/resume output flushing
-- [x] Handle WebView disposal → session cleanup
+### 9.6 Update flow-initialization.md
+- [x] Remove pre-launch input queue (not implemented)
+- [x] Fix ResizeObserver timing (happens in handleInit, not bootstrap)
+- [x] Fix init message shape (no `sessionId` field)
 
-#### 2.8 Testing (~3h)
-- [ ] Test simultaneous terminals in Sidebar + Panel
-- [ ] Test editor terminal tabs
-- [ ] Test multi-tab: create, switch, close, create again
-- [ ] Test view collapse/expand with running processes
-- [ ] Heavy output test: `find / -name "*.js" 2>/dev/null` in all locations
+### 9.7 Update flow-multi-tab.md
+- [x] Remove `stateUpdate` reconciliation (not implemented)
+- [x] Remove `maxTabs` / `_canCreateTerminal` (not implemented)
+- [x] Document "request new tab when last closed" behavior
 
-### Phase 2 Acceptance Criteria
-- [ ] Terminals work independently in Sidebar, Panel, and Editor
-- [ ] Multiple tabs per view with create/switch/close
-- [ ] PTY survives view collapse/hide
-- [ ] No resource leaks across view lifecycle
+### 9.8 Update output-buffering.md
+- [x] Document adaptive flush interval (4-16ms, not fixed 8ms)
+- [x] Document 1MB buffer overflow protection with FIFO eviction
+- [x] Document output pause/resume for hidden views
+- [x] Fix ack batching description (`if` not `while`)
+
+### 9.9 Update error-handling.md
+- [x] Remove CWD validation (not implemented)
+- [x] Remove Output Channel logging (not implemented — uses console.*)
+- [x] Remove orphaned PTY cleanup on WebView communication failure
+- [x] Mark dead error classes as removed (after Phase 7.3)
+- [x] Document error banner UI system
 
 ---
 
-## Phase 3 - Polish: Theming, Settings, UX (Week 5-6)
+## Phase 10 — Testing
 
 ### Goal
-Make AnyWhere Terminal feel **native** to VS Code - matching themes, respecting settings, and providing a polished user experience.
 
-### Tasks
+Add tests for the extracted modules and critical flows.
 
-#### 3.1 Advanced Theme Integration (~3h)
-- [ ] _(Basic CSS variable reading + MutationObserver already done in Phase 1 task 1.6a)_
-- [ ] Location-aware background: detect if terminal is in sidebar vs panel vs editor, adjust background accordingly
-- [ ] Read font from VS Code variables:
-  - `--vscode-editor-font-family`
-  - `--vscode-editor-font-size`
-- [ ] High-contrast theme support
-- [ ] Test with multiple VS Code themes (Dark+, Light+, Monokai, Solarized, etc.)
+### 10.1 Unit tests for extracted modules
+- [x] ThemeManager: CSS variable reading, high-contrast detection, theme object building
+- [x] XtermFitService: dimension calculation, no-op when unchanged
+- [x] ResizeCoordinator: debounce behavior, pending resize flag
+- [x] WebviewStateStore: persist/restore, state mutations
+- [x] MessageRouter: dispatch by type, unknown message handling
+- [x] BannerService: DOM creation, auto-dismiss
+- [x] FlowControl: ack batching, threshold, session deletion
 
-#### 3.2 Extension Settings (~3h)
-- [ ] Define `contributes.configuration` in `package.json`:
-  ```json
-  {
-    "anywhereTerminal.shell.macOS": { "type": "string", "default": "" },
-    "anywhereTerminal.shell.args": { "type": "array", "default": [] },
-    "anywhereTerminal.scrollback": { "type": "number", "default": 10000 },
-    "anywhereTerminal.fontSize": { "type": "number", "default": 0 },
-    "anywhereTerminal.cursorBlink": { "type": "boolean", "default": true },
-    "anywhereTerminal.defaultCwd": { "type": "string", "default": "" }
-  }
-  ```
-- [ ] Read settings via `workspace.getConfiguration('anywhereTerminal')`
-- [ ] Listen for setting changes: `workspace.onDidChangeConfiguration`
-- [ ] Apply setting changes to active sessions
-
-#### 3.3 Performance Optimization (~3h)
-- [ ] _(Base 8ms buffering + flow control already done in Phase 1 task 1.6)_
-- [ ] Evaluate adaptive output buffering:
-  - Consider dynamic interval adjustment based on output throughput
-  - Monitor and tune high/low watermark values based on real-world usage
-- [ ] Consider WebGL renderer addon (`@xterm/addon-webgl`):
-  - DOM renderer first → WebGL upgrade attempt → DOM fallback if WebGL fails
-  - Static class variable remembers WebGL failure across instances
-  - Evaluate if WebGL works in VS Code webview context
-- [ ] Profile memory usage per terminal instance
-- [ ] Add output buffer size limits with overflow handling
-
-#### 3.4 Advanced Keyboard Handling (~3h)
-- [ ] Implement comprehensive `attachCustomKeyEventHandler`:
-  - Cmd+C: copy/SIGINT logic
-  - Cmd+V: paste
-  - Cmd+K: clear terminal
-  - Cmd+A: select all (if supported)
-  - Ctrl+Tab: switch terminal tab
-  - Escape: deselect / pass to shell
-- [ ] Ensure VS Code shortcuts not consumed by terminal propagate correctly
-- [ ] Test with modifier keys on macOS (Cmd, Ctrl, Option, Shift)
-
-#### 3.5 Context Menu (~2h)
-- [ ] Implement right-click context menu in webview:
-  - Copy
-  - Paste
-  - Select All
-  - Clear Terminal
-  - Separator
-  - New Terminal
-  - Kill Terminal
-
-#### 3.6 Status & Feedback (~2h)
-- [ ] Show terminal process name in tab title (e.g., "zsh", "node", "python")
-- [ ] Show exit code when process exits: `[Process exited with code 0]`
-- [ ] Visual indicator for active/running vs exited terminals
-
-#### 3.7 Error Handling (~2h)
-- [ ] Handle PTY spawn failure gracefully (show error in webview)
-- [ ] Handle node-pty not found (VS Code version incompatibility)
-- [ ] Handle shell not found (invalid shell path)
-- [ ] Retry mechanism for transient failures
-
-#### 3.8 Testing (~3h)
-- [ ] Test with multiple VS Code themes (Dark+, Light+, Monokai, etc.)
-- [ ] Test all keyboard shortcuts
-- [ ] Test configuration changes in real-time
-- [ ] Stress test with heavy output (npm install, docker build, tail -f)
-- [ ] Test TUI programs: vim, htop, lazygit, fzf
-
-### Phase 3 Acceptance Criteria
-- [ ] Terminal seamlessly matches any VS Code theme
-- [ ] All settings work and apply in real-time
-- [ ] Keyboard shortcuts work correctly on macOS
-- [ ] Performance is smooth even with heavy output
-- [ ] Context menu works
+### 10.2 Integration tests for critical flows
+- [x] Ack routing: background tab output + correct ack delivery
+- [x] Tab lifecycle: create -> switch -> close -> auto-create
+- [x] Split pane: split -> close -> restructure layout
+- [x] Config update: font change -> refit all terminals
 
 ---
 
-## Phase 4 - Packaging & Release (Week 7-8)
+## Priority Order
 
-### Goal
-Package, test, and publish a production-quality extension to the VS Code Marketplace.
+1. **Phase 6** (correctness bugs) — highest impact, lowest risk
+2. **Phase 7** (dead code) — clean slate for refactoring
+3. **Phase 8** (module extraction) — main refactoring work
+4. **Phase 9** (doc updates) — can be done incrementally alongside Phase 8
+5. **Phase 10** (testing) — validates the refactoring
 
-### Tasks
+## Success Criteria
 
-#### 4.1 Bundling & Packaging (~3h)
-- [ ] Finalize esbuild configuration:
-  - Extension bundle: `out/extension.js` (Node.js CJS)
-  - Webview bundle: `media/webview.js` (browser IIFE)
-- [ ] Ensure node-pty is correctly externalized
-- [ ] Configure `.vscodeignore`:
-  ```
-  .vscode/**
-  src/**
-  node_modules/**
-  !media/**
-  !out/**
-  ```
-- [ ] Test `vsce package` produces valid `.vsix`
-- [ ] Test install from `.vsix` on clean VS Code
-
-#### 4.2 Platform-Specific Builds (macOS only for MVP) (~2h)
-- [ ] Since we use VS Code's built-in node-pty, no platform builds needed initially
-- [ ] If vendoring node-pty later:
-  - `vsce package --target darwin-x64`
-  - `vsce package --target darwin-arm64`
-
-#### 4.3 README & Documentation (~3h)
-- [ ] Write comprehensive README.md:
-  - Features overview with screenshots/GIFs
-  - Installation instructions
-  - How to open terminal in each location
-  - How to move view to Secondary Sidebar
-  - Configuration reference
-  - Known limitations
-  - Keyboard shortcuts reference
-- [ ] Create extension icon (128x128 PNG)
-- [ ] Add CHANGELOG.md for first release
-
-#### 4.4 Marketplace Metadata (~1h)
-- [ ] Configure `package.json`:
-  - `displayName`: "AnyWhere Terminal"
-  - `description`: clear and searchable
-  - `categories`: ["Other"]
-  - `keywords`: ["terminal", "sidebar", "panel", "anywhere", "xterm"]
-  - `repository`: GitHub URL
-  - `icon`: path to icon
-  - `galleryBanner`: colors
-
-#### 4.5 CI/CD (GitHub Actions) (~3h)
-- [ ] Create `.github/workflows/ci.yml`:
-  - Trigger: push to main, pull requests
-  - Steps: install, lint, type-check, build, package
-- [ ] Create `.github/workflows/release.yml`:
-  - Trigger: tag `v*`
-  - Steps: build, `vsce package`, create GitHub release with `.vsix` artifact
-  - Optional: auto-publish to Marketplace via `VSCE_PAT`
-
-#### 4.6 Final Testing (~3h)
-- [ ] Install from `.vsix` on clean macOS (Intel)
-- [ ] Install from `.vsix` on clean macOS (Apple Silicon)
-- [ ] Test with VS Code Stable and VS Code Insiders
-- [ ] Test workspace with special characters in path
-- [ ] Test with multiple workspaces open
-- [ ] Verify no errors in Extension Host output
-
-### Phase 4 Acceptance Criteria
-- [ ] Clean `.vsix` installs and works on macOS (both architectures)
-- [ ] README is clear and complete with visuals
-- [ ] CI/CD pipeline passes
-- [ ] Extension published to Marketplace (or ready to publish)
-
----
-
-## Phase 5 - Split View (Terminal Pane Splitting)
-
-### Goal
-Allow users to **split terminal panes** horizontally and vertically within each view (sidebar, panel, editor). Each split pane contains its own terminal session. Panes can be recursively split and resized via drag handles, similar to VS Code's editor split functionality.
-
-### Tasks
-
-#### 5.1 Split Layout Data Model (~3h)
-- [x] Design a tree-based layout model (binary split tree):
-  - `SplitNode`: either a `LeafNode` (contains terminal sessionId) or `BranchNode` (contains direction + two children)
-  - `BranchNode`: `{ direction: 'horizontal' | 'vertical', children: [SplitNode, SplitNode], ratio: number }`
-  - `LeafNode`: `{ sessionId: string }`
-- [x] Store layout tree per view in webview state
-- [x] Serialize/deserialize layout for state persistence
-
-#### 5.2 Split Container UI (~5h)
-- [x] Create `SplitContainer` component that renders the split tree recursively
-- [x] Each leaf renders a terminal (xterm.js instance) in its own container div
-- [x] Branch nodes render two children separated by a resize handle (divider)
-- [x] CSS: use flexbox or CSS grid for split layout
-  - Horizontal split: children stacked top-to-bottom
-  - Vertical split: children side-by-side left-to-right
-- [x] Each terminal container must support `FitAddon` independently
-
-#### 5.3 Resize Handles (Drag to Resize) (~4h)
-- [x] Implement drag handles between split panes
-- [x] On mousedown → track mousemove → update split ratio → on mouseup stop
-- [x] Minimum pane size constraint (e.g., 80px) to prevent collapsing
-- [x] Cursor changes on hover (col-resize / row-resize)
-- [x] Re-fit all affected terminals after resize
-
-#### 5.4 Split Actions & Commands (~3h)
-- [x] Add commands:
-  - `anywhereTerminal.splitHorizontal` — split active terminal horizontally
-  - `anywhereTerminal.splitVertical` — split active terminal vertically
-  - `anywhereTerminal.closeSplitPane` — close active pane (unsplit)
-- [x] Add split buttons to tab bar or terminal toolbar (split-horizontal icon, split-vertical icon)
-- [x] Context menu entries for split actions
-- [x] Keyboard shortcuts (e.g., Cmd+\ for vertical split, Cmd+Shift+\ for horizontal)
-
-#### 5.5 Focus Management (~2h)
-- [x] Track which pane is "active" (focused)
-- [x] Visual indicator for active pane (border highlight or subtle background change)
-- [x] Click on a pane to focus it
-- [x] Active pane receives keyboard input
-- [x] Tab bar reflects the active pane's session
-
-#### 5.6 Message Protocol Updates (~2h)
-- [x] Update resize messages to include sessionId (each pane resizes independently)
-- [x] Route input to the focused pane's session
-- [x] Handle output routing to correct pane container
-- [x] New messages:
-  - `{ type: 'splitTerminal', direction: 'horizontal' | 'vertical', sessionId: string }`
-  - `{ type: 'closeSplitPane', sessionId: string }`
-
-#### 5.7 Integration & Edge Cases (~3h)
-- [x] When a pane is closed, restructure the tree (promote sibling to parent's position)
-- [x] When the last pane is closed, handle gracefully (create new default terminal or close view)
-- [x] Resize all terminals when the overall view resizes (sidebar width change, etc.)
-- [x] Persist split layout across webview hide/show cycles
-- [x] Test recursive splitting: split → split again → split again → close inner panes
-
-### Phase 5 Acceptance Criteria
-- [x] Can split any terminal pane horizontally or vertically
-- [x] Can recursively split (split a split)
-- [x] Drag handles resize panes smoothly
-- [x] Each pane has its own independent terminal session
-- [x] Focus management works correctly
-- [x] Closing a pane restructures layout properly
-- [x] Layout survives view hide/show cycles
-
----
-
-## Risk Register
-
-| Risk | Impact | Probability | Mitigation |
-|------|--------|-------------|------------|
-| VS Code changes internal node-pty path | Extension breaks | Medium | Detect path dynamically, add fallback paths, consider vendoring |
-| WebGL renderer doesn't work in webview | Reduced performance | Low | Fallback to DOM/Canvas renderer |
-| postMessage IPC too slow for heavy output | UI lag | Low | Aggressive buffering, adaptive intervals |
-| `contribSecondarySideBar` API changes | Cannot register secondary sidebar directly | Medium | "Move View" workaround always works |
-| Keyboard shortcut conflicts with VS Code | UX friction | Medium | Use `when` clause contexts, test thoroughly |
-| Memory leaks from xterm.js instances | Extension instability | Medium | Proper disposal, testing with profiler |
-| Flow control watermarks miscalibrated | PTY stalls or memory exhaustion | Medium | Tune watermarks (100K/5K) empirically, add monitoring metrics |
-
----
-
-## Dependency Summary
-
-### Runtime Dependencies
-| Package | Purpose | Bundle Target |
-|---------|---------|---------------|
-| `@xterm/xterm` | Terminal emulator UI | Webview |
-| `@xterm/addon-fit` | Auto-resize terminal | Webview |
-| `@xterm/addon-web-links` | Clickable URLs in terminal output | Webview |
-| `@xterm/addon-webgl` | GPU-accelerated rendering (Phase 3) | Webview |
-| `node-pty` | PTY process spawning | Extension (external - from VS Code) |
-
-### Dev Dependencies
-| Package | Purpose |
-|---------|---------|
-| `esbuild` | Bundler |
-| `typescript` | Language |
-| `@types/vscode` | VS Code API types |
-| `@types/node` | Node.js types |
-| `@vscode/vsce` | Extension packaging |
-| `eslint` | Linting |
+- `src/webview/main.ts` < 300 LOC
+- No xterm private API access outside `XtermFitService`
+- All correctness bugs fixed
+- Design docs match code
+- Key flows have test coverage
